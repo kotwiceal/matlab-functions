@@ -129,7 +129,9 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
     funcs = cell2struct(cellfun(@(f) str2func(f), fieldnames(plt), 'UniformOutput', false), fieldnames(plt));
     funcs.xregion = @(varargin) plotregion('x',varargin{:});
     funcs.yregion = @(varargin) plotregion('y',varargin{:});
-    pltfunc = cellfun(@(p) funcs.(p), plotname, UniformOutput = false);
+    funcs.imagesc = @(varargin) imagesc(varargin{1},[min(varargin{2}(:)),max(varargin{2}(:))],...
+        [min(varargin{3}(:)),max(varargin{3}(:))],varargin{4});
+    pltfunc = cellfun(@(p) funcs.(p), plotname, 'UniformOutput', false);
 
     % parse data
     if ~isempty(popt.probe)
@@ -144,14 +146,6 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
     varargin = cellfun(@(v) terop(isvector(v),v(:),v), varargin, UniformOutput = false);
     [data, dg] = wraparrbycell(varargin{:}, dims = dims);
     dgn = splitapply(@numel, dg, dg);
-
-    % exclude grid fo 'imagesc'
-    % index = cellfun(@(p) strcmp(p, 'imagesc'), plotname);
-    % temp = data(index);
-    % temp = temp{:};
-    % temp = temp(:,end);
-    % % data(index) = temp;
-    % data(index) = {temp(:)};
 
     % create data-axis map 
     ag = zeros(1, numel(data));

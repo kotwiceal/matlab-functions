@@ -61,13 +61,12 @@ function roisnaphandler(roi, target, options)
 end
 
 function [p, sz] = procpoint(chobj)
-    disp('procpoint')
     switch class(chobj)
         case 'matlab.graphics.primitive.Image'
-            sz = flip(size(chobj.CData));
+            sz = size(chobj.CData);
             p = cell(1, numel(sz));
-            sz = cellfun(@(x) 1:x, num2cell(sz), UniformOutput = false);
-            [p{:}] = ndgrid(sz{:});
+            szt = cellfun(@(x) 1:x, num2cell(sz), UniformOutput = false);
+            [p{:}] = ndgrid(szt{:});
             p = cell2mat(cellfun(@(x) x(:), p, UniformOutput = false));
         otherwise
             sz = size(chobj.XData);
