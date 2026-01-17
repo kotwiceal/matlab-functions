@@ -3,7 +3,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         plotname {mustBeMember(plotname, {'plot', 'scatter', 'contour', 'contourf', 'imagesc', 'surf', 'pcolor', 'plot3', 'xregion', 'yregion'})}
     end
     arguments (Input, Repeating)
-        varargin {mustBeA(varargin, {'single', 'double', 'cell'})}
+        varargin {mustBeA(varargin, {'int8', 'int16', 'int32', 'int64', 'single', 'double', 'cell'})}
     end
     arguments (Input)
         popt.parent = []
@@ -379,7 +379,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         axs = cellfun(@(f)findobj(f, 'Type', 'Axes'), figs, UniformOutput = false)';
         rois = flip(findobj(cell2mat(axs), 'Type','images.roi'));
         % gather axes children
-        plts = cell2mat(cellfun(@(a) a.Children, axs, UniformOutput = false));
+        plts = flip(cell2mat(cellfun(@(a) a.Children, axs, UniformOutput = false)));
         % set target objects
         cellfun(@(r) set(r, 'UserData', setfield(r.UserData,'target',plts(r.UserData.tindex))), num2cell(rois))
         % set snap hander

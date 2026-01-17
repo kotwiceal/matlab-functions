@@ -6,7 +6,7 @@ function varargout = cellprobe(dplot, pplot, funcs, dims, varargin, opt, popt, p
         dims
     end
     arguments (Input, Repeating)
-        varargin {mustBeA(varargin, {'double', 'cell'})}
+        varargin {mustBeA(varargin, {'int8', 'int16', 'int32', 'int64', 'single', 'double', 'cell'})}
     end
     arguments (Input)
         opt.dispnameroi (1,:) logical = false
