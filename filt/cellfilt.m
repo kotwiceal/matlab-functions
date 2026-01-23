@@ -10,6 +10,7 @@ function varargout = cellfilt(name,varargin,param)
         param.ndim {mustBeA(param.ndim, {'double', 'cell'})} = [] % filter dimension 
         param.padval {mustBeA(param.padval, {'double', 'char', 'string', 'logical', 'cell'})} = 'symmetric' % padding value
         param.method {mustBeMember(param.method, {'none', 'linear', 'nearest', 'natural', 'cubic', 'v4'})} = 'nearest'
+        param.arg (1,:) double = []
     end
     arguments (Output, Repeating)
         varargout
@@ -41,6 +42,7 @@ function data = filter(data, param, filt)
         param.name {mustBeMember(param.name, {'none', 'gaussian', 'average', 'sobel', 'median', 'fillmiss', 'griddatan', 'fillmissn', 'interpn'})} = 'gaussian'
         param.method {mustBeMember(param.method, {'none', 'linear', 'nearest', 'natural', 'cubic', 'v4'})} = 'nearest' % at specifying `filtker=fillmiss`
         param.zero2nan (1,1) logical = true
+        param.arg (1,:) double = []
         filt.kernel (1,:) double = [] % kernel size
         filt.ndim (1,:) double = [] % number dimensions
         filt.padval {mustBeA(filt.padval, {'double', 'char', 'string', 'logical', 'cell'})} = 'symmetric' % padding value
@@ -104,6 +106,8 @@ function data = filter(data, param, filt)
                     ker = fspatialn(numel(filt.ndim),[1,0,-1],[1,2,1]);
                     if isvector(ker); k = numel(ker); else; k = size(ker); end
                     filt.kernel = k;
+                case 'gaussian'
+                    ker = gausian(filt.kernel,param.arg);
             end
             if isvector(ker); ndker = 1; else; ndker = 1:ndims(ker); end
             func = @(x,~) squeeze(tensorprod(ker, x, ndker, filt.ndim));
@@ -114,4 +118,18 @@ function data = filter(data, param, filt)
 
     data = nonlinfilt(func, data, filt{:});
 
+end
+
+function h = gausian(sz,std)
+    if isempty(std); std = ones(1,numel(sz)); end
+    sz = (sz-1)/2;
+    std = num2cell(std);
+    arg = arrayfun(@(x)-x:x,sz,'UniformOutput',false);
+    [arg{:}] = ndgrid(arg{:});
+    arg = cellfun(@(x,y)-x.^2./(2.*y.^2),arg,std,'UniformOutput',false);
+    arg = cat(ndims(arg{1})+1,arg{:});
+    h = exp(sum(arg,ndims(arg)));
+    h(h<eps*max(h(:))) = 0;
+    sumh = sum(h(:));
+    if sumh ~= 0; h  = h/sumh; end
 end

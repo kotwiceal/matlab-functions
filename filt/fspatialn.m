@@ -21,10 +21,6 @@ function varargout = fspatialn(n, varargin, param)
     m = cell(1, n);
     [m{:}] = ndgrid(varargin{:});
 
-    % sz = cellfun(@(x) size(x), varargin, 'UniformOutput', false);
-    % m = cellfun(@(x,s) reshape(x, repmat(s, 1, n)), m, sz, 'UniformOutput', false);
-    % n = ndims(m{1});
-
     f = prod(cat(n+1, m{:}), n+1);
     if n == 1; n = n + 1; end
     r = 1:n;
