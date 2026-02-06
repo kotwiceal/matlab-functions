@@ -112,6 +112,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         proi.rsnap {mustBeMember(proi.rsnap, {'on', 'off'})} = 'on'
         proi.redgealpha (1,:) {mustBeA(proi.redgealpha, {'double', 'cell'})} = 1
         proi.rfacealpha (1,:) {mustBeA(proi.rfacealpha, {'double', 'cell'})} = 1
+        proi.rweight (1,:) double = [] 
     end
 
     arguments (Output, Repeating)
@@ -291,12 +292,14 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         rnumber = proi.rnumber;
         rposition = cellfun(@(p,n) terop(isscalar(p), repelem(p,n), p), proi.rposition, proi.rnumber, 'UniformOutput', false);
         rsnap = proi.rsnap;
+        rweight = proi.rweight;
 
         proi = rmfield(proi, 'draw');
         proi = rmfield(proi, 'rtarget');
         proi = rmfield(proi, 'rnumber');
         proi = rmfield(proi, 'rposition');
         proi = rmfield(proi, 'rsnap');
+        proi = rmfield(proi, 'rweight');
 
         froi = proi;
         froi.rlabel = @(obj, value) set(obj, 'Label', value);
@@ -340,7 +343,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         splitapply(@(roi) arrayfun(@(r,i) set(r, 'Label', expr(r,i)), roi, (1:numel(roi))'), rois, rgroup);
         % set aligment event
         expr = @(r,roi) teropf(strcmp(r.UserData.linealign,'on'), ...
-            @() addlistener(r, 'MovingROI', @(s,e) roievtlinalig(e,num2cell(roi))), ...
+            @() addlistener(r, 'MovingROI', @(s,e) roievtlinalig(e,num2cell(roi), rweight)), ...
             @() nan);
         splitapply(@(roi) {arrayfun(@(r) {expr(r,roi)}, roi)}, rois, rgroup);
     else
@@ -387,7 +390,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
             num2cell(rois));
         % set aligment event
         expr = @(r,roi) teropf(strcmp(r.UserData.linealign,'on'), ...
-            @() addlistener(r, 'MovingROI', @(s,e) roievtlinalig(e,num2cell(roi))), ...
+            @() addlistener(r, 'MovingROI', @(s,e) roievtlinalig(e,num2cell(roi), rweight)), ...
             @() nan);
         splitapply(@(roi) {arrayfun(@(r) expr(r,roi), roi)}, rois, rgroup);
     end
@@ -419,19 +422,27 @@ function [funcs, params] = cellapply(objs, hdls, params)
         objs(:), funcs(:), params(:), UniformOutput = false);
 end
 
-function roievtlinalig(evt, rois)
+function roievtlinalig(evt, rois, weight)
     % event to align ROI object by line
-    num = numel(rois);
+    if isempty(weight)
+        p = numel(rois);
+    else
+        p = rescale(weight);
+        linspace = @(x1, x2, w) x1 + (x2-x1)*w;
+    end
+    
     if isa(evt.Source, 'images.roi.Rectangle')
         cellfun(@(r) set(r, 'Position', [r.Position(1:2), evt.CurrentPosition(:,3:4)]), rois);
     end
     pos = cellfun(@(r) r.Position, rois, UniformOutput = false);
-    pos = cell2mat(arrayfun(@(p1,p2)shiftdim(linspace(p1,p2,num),-1),pos{1},pos{end},'UniformOutput',false));
+   
+    pos = cell2mat(arrayfun(@(p1,p2)shiftdim(linspace(p1,p2,p),-1),pos{1},pos{end},'UniformOutput',false));
     pos = mat2cell(pos,size(pos,1),size(pos,2),ones(1,size(pos,3)));
     cellfun(@(r, p) set(r, 'Position', p), rois, pos(:));
     cellfun(@(r)  teropf(strcmp(r.UserData.snap, 'on'), @() roisnaphandler(r, r.UserData.target), @() []), ...
         rois, 'UniformOutput', false);
 end
+
 
 function plotregion(type,ax,varargin)
     arguments (Input)
