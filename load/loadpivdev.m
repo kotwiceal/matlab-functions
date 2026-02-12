@@ -10,6 +10,7 @@ function data = loadpivdev(source, kwargs)
         kwargs.slice (1,:) double = [1, 2] % index to slice imx.Data 
         kwargs.scale (1,1) logical = true % apply scale to velocity
         kwargs.split (1,1) logical = true % split velocity components
+        kwargs.regexp (1,1) logical = false
     end
 
     if isscalar(source)
@@ -19,7 +20,14 @@ function data = loadpivdev(source, kwargs)
             n = numel(unique(arrayfun(@(d) string(d.folder), arrdir)));
             kwargs.filenames = reshape(kwargs.filenames, [], n);
         else
-            kwargs.filenames = source;
+            if kwargs.regexp
+                dr = dir(source);
+                nf = numel(unique(arrayfun(@(x)string(x.folder),dr)));
+                kwargs.filenames = arrayfun(@(x)string(fullfile(x.folder,x.name)),dr);
+                kwargs.filenames = reshape(kwargs.filenames,[],nf);
+            else
+                kwargs.filenames = source;
+            end
         end
     else
         kwargs.filenames = source;

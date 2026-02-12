@@ -10,7 +10,12 @@ function varargout = maskcutdata(mask, varargin, options)
         options.fill {mustBeMember(options.fill, {'none', 'innan', 'outnan'})} = 'none'
         options.shape {mustBeMember(options.shape, {'bounds', 'trim'})} = 'bounds'
         options.roi {mustBeMember(options.roi, {'nodes', 'region'})} = 'region' % ROI mode
-        options.ans {mustBeMember(options.ans, {'on', 'off'})} = 'off' % flip outputs
+        options.isrectangle (1,1) logical = false
+    end
+
+    if options.isrectangle
+        mask = [mask(1), mask(2); mask(1)+mask(3), mask(2); mask(1)+mask(3), ....
+            mask(2)+mask(4); mask(1), mask(2)+mask(4)];
     end
 
     if isempty(options.dims); options.dims = 1:size(mask,2); end
@@ -55,9 +60,6 @@ function varargout = maskcutdata(mask, varargin, options)
     varargout = cellfun(@(dim, data) mdslice(subind, linindr, dim, data, fill = options.fill, ...
         shape = options.shape), dims, varargin, UniformOutput = false);
 
-    switch options.ans
-        case 'on'
-            varargout = flip(varargout);
-    end
+    varargout = [varargout(end), varargout(1:end-1)];
 
 end

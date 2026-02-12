@@ -35,13 +35,22 @@ function data = loadpiv(input, kwargs)
         kwargs.parallel (1,1) logical = false
         kwargs.components (1,:) char {mustBeMember(kwargs.components, {'x-y,u-v', 'x-z,u-w'})} = 'x-z,u-w'
         kwargs.storefilenames logical = false
+        kwargs.cast {mustBeMember(kwargs.cast, {'single', 'double'})} = 'double'
+        kwargs.regexp (1,1) logical = false
     end
 
     if isscalar(input)
         if isfolder(input)
             kwargs.filenames = getfilenames(input, extension = '.vc7', subfolders = kwargs.subfolders);
         else
-            kwargs.filenames = input;
+            if kwargs.regexp
+                dr = dir(input);
+                nf = numel(unique(arrayfun(@(x)string(x.folder),dr)));
+                f = arrayfun(@(x)string(fullfile(x.folder,x.name)),dr);
+                kwargs.filenames = reshape(f,[],nf);
+            else
+                kwargs.filenames = input;
+            end
         end
     else
         kwargs.filenames = input;
@@ -57,6 +66,8 @@ function data = loadpiv(input, kwargs)
     [ax1, ax2] = meshgrid(1:nx, 1:nz); vel1 = zeros([nz, nx, sz]); vel2 = zeros([nz, nx, sz]);
     ax1 = ax1 * imx.ScaleX(1) * imx.Grid + imx.ScaleX(2);
     ax2 = ax2 * imx.ScaleY(1) * imx.Grid + imx.ScaleY(2);
+    ax1 = cast(ax1, kwargs.cast);
+    ax2 = cast(ax2, kwargs.cast);
 
     if kwargs.parallel
         parfor i = 1:prod(sz)
@@ -74,6 +85,9 @@ function data = loadpiv(input, kwargs)
 
     vel1 = reshape(vel1, [size(vel1, [1, 2]), sz]);
     vel2 = reshape(vel2, [size(vel2, [1, 2]), sz]);
+
+    vel1 = cast(vel1, kwargs.cast);
+    vel2 = cast(vel2, kwargs.cast);
 
     switch kwargs.components
         case 'x-y,u-v'

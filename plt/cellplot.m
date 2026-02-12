@@ -77,6 +77,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         plgd.lnumcolumns {mustBeA(plgd.lnumcolumns, {'double', 'cell'})} = 1
         plgd.ltextcolor {mustBeA(plgd.ltextcolor, {'double', 'char', 'string', 'cell'})} = []
         plgd.ledgecolor {mustBeA(plgd.ledgecolor, {'double', 'char', 'string', 'cell'})} = []
+        plgd.lstring {mustBeA(plgd.lstring, {'double', 'char', 'string', 'cell'})} = []
         % line properties
         plin.cyclingmethod {mustBeMember(plin.cyclingmethod, {'withcolor', 'beforecolor', 'aftercolor'})} = 'withcolor'
         plin.linestyle {mustBeMember(plin.linestyle, {'-', '--', ':', '-.', 'none'})} = '-'
@@ -235,6 +236,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         flgd.lnumcolumns = @(obj, value) set(obj, 'NumColumns', value);
         flgd.ltextcolor = @(obj, value) teropf(isempty(value), @() [], @() set(obj, 'TextColor', value));
         flgd.ledgecolor = @(obj, value) teropf(isempty(value), @() [], @() set(obj, 'EdgeColor', value));
+        flgd.lstring = @(obj, value) teropf(isempty(value), @() [], @() set(obj, 'String', value));
         cellapply(num2cell(flip(findobj(fig, 'Type', 'Legend'))), flgd, plgd);
     end
 
