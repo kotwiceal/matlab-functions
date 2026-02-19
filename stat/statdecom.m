@@ -7,7 +7,8 @@ function varargout = statdecom(bins,data,param,filt,cons,prob,popt,pfilt)
         param.objnorm (1,1) double = 2 % objective function norm
         param.pass (1,1) {mustBeInteger} = 1 % to recursive approximation
         param.ans {mustBeMember(param.ans, {'cell', 'struct'})} = 'cell' % output data format
-        %% nonlinfilt
+        param.cast {mustBeMember(param.cast, {'single', 'double'})} = 'double' % cast data
+        %% filter: statistical distribution estimation
         filt.kernel (1,:) double = []
         filt.stride (1,:) double = []
         filt.ndim (1,:) double = []

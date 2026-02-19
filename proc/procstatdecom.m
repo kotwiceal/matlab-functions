@@ -8,6 +8,7 @@ function varargout = procstatdecom(bins,data,kwarg,param,filt,cons,prob,popt,pre
         param.objnorm (1,1) double = 2 % objective function norm
         param.pass (1,1) {mustBeInteger} = 1 % to recursive approximation
         param.ans {mustBeMember(param.ans, {'cell', 'struct'})} = 'cell' % output data format
+        param.cast {mustBeMember(param.cast, {'single', 'double'})} = 'double' % cast data
         %% nonlinfilt
         filt.kernel (1,:) double = []
         filt.stride (1,:) double = []
@@ -103,4 +104,5 @@ function varargout = procstatdecom(bins,data,kwarg,param,filt,cons,prob,popt,pre
     varargout{1} = struct(threshold=threshold,binarized=binarized,...
         intermittency=intermittency,mbinarized=mbinarized);
 
+    varargout{1} = structfun(@(x)cast(x,param.cast),varargout{1},'UniformOutput',false);
 end

@@ -11,6 +11,7 @@ function varargout = maskcutdata(mask, varargin, options)
         options.shape {mustBeMember(options.shape, {'bounds', 'trim'})} = 'bounds'
         options.roi {mustBeMember(options.roi, {'nodes', 'region'})} = 'region' % ROI mode
         options.isrectangle (1,1) logical = false
+        options.cast {mustBeMember(options.cast, {'single', 'double'})} = 'double'
     end
 
     if options.isrectangle
@@ -58,7 +59,9 @@ function varargout = maskcutdata(mask, varargin, options)
     dims = repmat({1:size(mask,2)}, 1, numel(varargin));
 
     varargout = cellfun(@(dim, data) mdslice(subind, linindr, dim, data, fill = options.fill, ...
-        shape = options.shape), dims, varargin, UniformOutput = false);
+        shape = options.shape), dims, varargin, 'UniformOutput', false);
+
+    varargout = cellfun(@(x) cast(x, options.cast), varargout, 'UniformOutput', false);
 
     varargout = [varargout(end), varargout(1:end-1)];
 

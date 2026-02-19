@@ -97,7 +97,9 @@ function data = filter(data, param, filt)
             q = cellfun(@(x)linspace(0,1,x),num2cell(filt.kernel),'UniformOutput',false);
             [q{:}] = ndgrid(q{:});
             if isscalar(filt.kernel); filt.kernel = [filt.kernel, 1]; end
-            func = @(x,~) reshape(interpn(p{:},x,q{:},param.method),filt.kernel);
+            kernel = filt.kernel;
+            func = @(x,~) reshape(interpn(p{:},x,q{:},param.method),kernel);
+            filt.kernel = nan(1,numel(filt.kernel));
         otherwise
             switch param.name
                 case 'average'

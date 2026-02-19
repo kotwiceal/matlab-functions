@@ -270,16 +270,20 @@ function varargout = filteval(param)
 
         % evaluate paddings
         for j = 1:size(outbound{i}, 1)
-            if outbound{i}(j, 1) < 1
-                outbound{i}(j, 1) = abs(outbound{i}(j, 1)) + 1;
+            if param.ispad{i}{j}
+                if outbound{i}(j, 1) < 1
+                    outbound{i}(j, 1) = abs(outbound{i}(j, 1)) + 1;
+                else
+                    outbound{i}(j, 1) = 0;
+                end
+    
+                if outbound{i}(j, 2) > param.szarg{i}(j)
+                    outbound{i}(j, 2) = outbound{i}(j, 2) - param.szarg{i}(j);
+                else
+                    outbound{i}(j, 2) = 0;
+                end
             else
-                outbound{i}(j, 1) = 0;
-            end
-
-            if outbound{i}(j, 2) > param.szarg{i}(j)
-                outbound{i}(j, 2) = outbound{i}(j, 2) - param.szarg{i}(j);
-            else
-                outbound{i}(j, 2) = 0;
+                outbound{i}(j, :) = 0;
             end
         end
     end
