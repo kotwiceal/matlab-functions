@@ -1,6 +1,6 @@
 function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, plin, proi)
     arguments (Input)
-        plotname {mustBeMember(plotname, {'plot', 'scatter', 'contour', 'contourf', 'imagesc', 'surf', 'pcolor', 'plot3', 'xregion', 'yregion'})}
+        plotname {mustBeMember(plotname, {'plot', 'bar', 'scatter', 'contour', 'contourf', 'imagesc', 'surf', 'pcolor', 'plot3', 'xregion', 'yregion'})}
     end
     arguments (Input, Repeating)
         varargin {mustBeA(varargin, {'int8', 'int16', 'int32', 'int64', 'single', 'double', 'cell'})}
@@ -124,7 +124,7 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
 
     if ~isa(plotname, 'cell'); plotname = {plotname}; end
     if isscalar(plotname) & isa(varargin{1}, 'cell'); plotname = repmat(plotname, 1, numel(varargin{1})); end
-    plt = struct(plot = 1, scatter = 1, contour = 2, contourf = 2, imagesc = 2, ...
+    plt = struct(plot = 1, bar = 1, scatter = 1, contour = 2, contourf = 2, imagesc = 2, ...
         surf = 2, pcolor = 2, plot3 = 2, xregion = 1, yregion = 1);
     dims = cellfun(@(p) plt.(p), plotname);
     % define custom function
@@ -394,7 +394,9 @@ function varargout = cellplot(plotname, varargin, popt, pax, pset, pclb, plgd, p
         expr = @(r,roi) teropf(strcmp(r.UserData.linealign,'on'), ...
             @() addlistener(r, 'MovingROI', @(s,e) roievtlinalig(e,num2cell(roi), rweight)), ...
             @() nan);
-        splitapply(@(roi) {arrayfun(@(r) expr(r,roi), roi)}, rois, rgroup);
+        if exist('rgroup')
+            splitapply(@(roi) {arrayfun(@(r) expr(r,roi), roi)}, rois, rgroup);
+        end
     end
 
     switch popt.ans
