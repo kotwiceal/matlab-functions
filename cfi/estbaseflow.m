@@ -72,9 +72,9 @@ function estbaseflow(input, x0, z0, u0, k, param)
     figure('WindowStyle', 'docked'); hold on; grid on; box on; pbaspect([1, 1, 1]);
     xlabel('x, mm');
     for i = 1:size(data.x, 3)
-        plot(data.xl{i}, data.ul{i}./data.u0*data.k(i), 'Color', [0 0.4470 0.7410], 'DisplayName', data.label(i))
-        plot(data.xl{i}, data.wl{i}./data.u0*data.k(i), 'Color', [0.8500 0.3250 0.0980], 'DisplayName', data.label(i))
-        plot(data.xl{i}, data.Ul{i}./data.u0*data.k(i), 'Color', [0.4660 0.6740 0.1880], 'DisplayName', data.label(i))
+        plot(data.xl{i}, data.ul{i}./data.u0*data.k(i), '.-', 'Color', [0 0.4470 0.7410], 'DisplayName', 'u/U_0')
+        plot(data.xl{i}, data.wl{i}./data.u0*data.k(i), '.-', 'Color', [0.8500 0.3250 0.0980], 'DisplayName', 'w/U_0')
+        plot(data.xl{i}, data.Ul{i}./data.u0*data.k(i), '.-', 'Color', [0.4660 0.6740 0.1880], 'DisplayName', '(u^{2}+w^{2})^{1/2}/U_{0}')
     end
     
     plot(x_prime*1e3, u_prime, 'Color', [0 0.4470 0.7410], 'DisplayName', 'u/U_{0}')
