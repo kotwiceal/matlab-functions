@@ -16,7 +16,6 @@ classdef cfic < handle
         mcu_com_set {mustBeText} = "set-param"
         mcu_url_set_param
         mcu_url_get_param
-        mcu_tag {mustBeText} = "MCU"
 
         figures struct = struct(d=[])
         tiles struct = struct(d=[])
@@ -29,7 +28,6 @@ classdef cfic < handle
 
         dashboard
         result
-
     end
     properties (Access = public)
         %% parallel
@@ -136,10 +134,12 @@ classdef cfic < handle
                 problem (1,1) struct
                 index {mustBeVector}
             end
-            url = obj.mcu_url_set_param;
-            dqlop = obj.dq.log;
-            % todo: append MCU dashboard update
-            func = @(x)cfic.mstat_mcu_set(url,struct(dac=struct(value=x,index=index)),dqlop,parallel.pool.PollableDataQueue);
+            urlset = obj.mcu_url_set_param;
+            urlget = obj.mcu_url_get_param;
+            dqlog = obj.dq.log;
+            dqget = obj.dq.mcuget;
+            func = @(x)cfic.mcu_set_get(urlget,urlset,struct(dac=struct(value=x,index=index)),...
+                dqlog,dqget,parallel.pool.PollableDataQueue);
             args = {problem,func,obj.dq.log,obj.dq.terminate,obj.dq.progress,obj.dq.result,obj.pdq.process};
             obj.ff.optimize = parfeval(backgroundPool,@cfic.optimization,0,args{:});
         end
@@ -157,7 +157,7 @@ classdef cfic < handle
             arguments (Output)
                 data (1,1) struct
             end
-            data = cfic.mstat_mcu_get(obj.mcu_url_get_param,obj.dq.log,obj.dq.mcuget);
+            data = cfic.http_get(obj.mcu_url_get_param,obj.dq.log,obj.dq.mcuget);
         end
         function state = mcu_set(obj,data)
             arguments (Input)
@@ -167,7 +167,8 @@ classdef cfic < handle
             arguments (Output)
                 state (1,1) logical
             end
-            state = cfic.mstat_mcu_set(obj.mcu_url_set_param,data,obj.dq.log,obj.pdq.httppost);
+            state = cfic.http_post(obj.mcu_url_set_param,data,obj.dq.log,obj.pdq.httppost);
+            cfic.http_get(obj.mcu_url_get_param,obj.dq.log,obj.dq.mcuget);
         end
     end
     methods (Access = public)
@@ -215,7 +216,7 @@ classdef cfic < handle
         delete(t.Children)
         ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on');
         plot(ax,data);
-        xlabel('samples'); ylabel('');
+        xlabel('samples'); ylabel('values');
         legend(ax,string(num2str(obj.chmask(:))),'Location','east')
         title(ax,string(x.datetime))
     end
@@ -233,37 +234,69 @@ classdef cfic < handle
         xlabel(ax,'channel'); ylabel(ax,'');
         title(ax,string(x.datetime))
     end
-    function mcuview(obj,x)
+    function mcuview(obj,data)
         arguments
             obj 
-            x (1,1) struct
+            data (1,1) struct
         end
         mask = obj.ch_mask_dac;
-        value = x.dac.value(mask);
+        amp = data.dac.value(mask);
+        offset = data.dac_offset.value;
 
         label = 'mcu';
         obj.figure(label);
         t = tiledlayout(obj.figures.(label));
         delete(t.Children)
         ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on');
-        bar(value)
-        xlabel('channel')
+        bar(amp); xlabel('channel'); ylabel('amplitude');
+        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on');
+        bar(offset); xlabel('channel'); ylabel('offset');
     end
-    function optprogress(obj,x)
+    function optprogress(obj,data)
         arguments
             obj 
-            x (1,1) struct
+            data (1,1) struct
         end
-        obj.dashboard.optimization = cat(1,obj.dashboard.optimization,x);
+        l = 4;
+        obj.dashboard.optimization = cat(1,obj.dashboard.optimization,data);
+        n = numel(obj.dashboard.optimization);
+        if n > 4
+            m = (n-l+1):n;
+        else
+            m = 1:n;
+        end
+        xdata = arrayfun(@(x)x.xdata.dac.value,obj.dashboard.optimization,'UniformOutput',false);
+        xdata = cat(2,xdata{:}); xdata = xdata(obj.ch_mask_dac,m);
+        ydata = arrayfun(@(x)x.ydata.ymean,obj.dashboard.optimization,'UniformOutput',false);
+        ydata = cat(2,ydata{:}); ydata = ydata(obj.ch_mask_adc,m);
+
+        ynorm = arrayfun(@(x)x.ydata.ynorm,obj.dashboard.optimization);
+
         label = 'opt';
         obj.figure(label);
         t = tiledlayout(obj.figures.(label));
         if isempty(t.Children)
-            ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on');    
+            arrayfun(@(x)set(nexttile(t),'Box','on','XGrid','on','YGrid','on'),1:3)
+            arrayfun(@(x)hold(x,'on'),t.Children)
         end
-        ax = t.Children(1);
-        delete(ax.Children)
-        plot(ax,[obj.dashboard.optimization(:).ynorm])
+        axs = flip(findobj(t,'type','Axes'));
+        arrayfun(@(x)cla(x),axs);
+
+        ax = axs(1); colors = colororder;
+        p = plot(ax,xdata,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
+        xlabel(ax,'channel'); ylabel(ax,'amplitude')
+        arrayfun(@(p,c)set(p,'Color',[p.Color,c]),p,linspace(0.25,1,numel(p))')
+        subtitle(ax,'actuator'); legend(ax,split(num2str(m)),'Location','southeast')
+
+        ax = axs(2); colors = colororder;
+        p = plot(ax,ydata,'.-','Color',colors(1,:),'MarkerFaceColor','auto');
+        xlabel(ax,'channel'); ylabel(ax,'amplitude')
+        arrayfun(@(p,c)set(p,'Color',[p.Color,c]),p,linspace(0.25,1,numel(p))')
+        subtitle(ax,'sensor'); legend(ax,split(num2str(m)),'Location','southeast')
+
+        ax = axs(3);
+        plot(ax,ynorm,'-o','MarkerFaceColor','auto')
+        yline(ax,ynorm(1),'-','reference'); xlabel('iteration'); ylabel('objective function')
     end
     end
     methods (Access = public)
@@ -291,11 +324,11 @@ classdef cfic < handle
     %% static handlers
 
     % MCU handlers
-    function data = mstat_mcu_get(url,dqlog,dqget)
+    function data = http_get(url,dqlog,dqget)
         arguments (Input)
             url {mustBeText}
-            dqlog parallel.pool.DataQueue
-            dqget parallel.pool.DataQueue
+            dqlog (1,1) parallel.pool.DataQueue
+            dqget (1,1) parallel.pool.DataQueue
         end
         arguments (Output)
             data (1,:) struct
@@ -307,17 +340,17 @@ classdef cfic < handle
             response = request.send(url);
             data = response.Body.Data;
             send(dqget,data);
-            send(dqlog,sprintf("%s  HTTP GET request: %s",flabel,jsonencode(data)));
-        catch
-            send(dqlog,sprintf("%s  HTTP GET request failed",flabel));
+            send(dqlog,sprintf("%s HTTP GET request: %s",flabel,jsonencode(data)));
+        catch ex
+            send(dqlog,sprintf("%s HTTP GET request failed: %s",flabel,ex.message));
         end
     end
-    function state = mstat_mcu_set(url,data,dqlog,pdqset)
+    function state = http_post(url,data,dqlog,pdqpost)
         arguments (Input)
             url {mustBeText} 
             data (1,1) struct
-            dqlog parallel.pool.DataQueue
-            pdqset parallel.pool.PollableDataQueue
+            dqlog (1,1) parallel.pool.DataQueue
+            pdqpost (1,1) parallel.pool.PollableDataQueue
         end
         arguments (Output)
             state (1,1) logical
@@ -326,15 +359,38 @@ classdef cfic < handle
         state = false;
         try
             data = jsonencode(data);
-            request = matlab.net.http.RequestMessage('POST', [matlab.net.http.field.ContentTypeField('application/json'), ...
+            request = matlab.net.http.RequestMessage('POST', ...
+                [matlab.net.http.field.ContentTypeField('application/json'), ...
                 matlab.net.http.field.AcceptField('application/json')], data);
             request.send(url);
             send(dqlog, sprintf("%s HTTP POST request: %s",flabel,data));
             state = true;
-        catch
-            send(dqlog,sprintf("%s  HTTP POST request failed",flabel));
+        catch ex
+            send(dqlog,sprintf("%s HTTP POST request failed: %s",flabel,ex.message));
         end
-        send(pdqset,state);
+        send(pdqpost,state);
+    end
+    function odata = mcu_set_get(urlget,urlset,idata,dqlog,dqget,pdqpost)
+        arguments (Input)
+            urlget (1,1) {mustBeText}
+            urlset (1,1) {mustBeText}
+            idata (1,1) struct
+            dqlog (1,1) parallel.pool.DataQueue
+            dqget (1,1) parallel.pool.DataQueue
+            pdqpost (1,1) parallel.pool.PollableDataQueue
+        end
+        arguments (Output)
+            odata (1,1) struct
+        end
+        d = dbstack; flabel = sprintf("@%s:",d(1).name);
+        odata = struct([]);
+        try
+            cfic.http_post(urlset,idata,dqlog,pdqpost);
+            odata = cfic.http_get(urlget,dqlog,dqget);
+            send(dqlog, sprintf("%s HTTP POST/GET request",flabel));
+        catch ex
+            send(dqlog,sprintf("%s HTTP POST/GET request failed: %s",flabel,ex.message));
+        end
     end
     function d = process(d)
         arguments (Input)
@@ -381,16 +437,16 @@ classdef cfic < handle
             y (1,1) struct
         end
         d = dbstack; flabel = sprintf("@%s:",d(1).name);
-        state = func(x);
+        xdata = func(x);
         pause(0.25)
         % todo: send lock to sync
-        if state
+        if ~isempty(xdata)
             wstate = true;
             dt = datetime;
             while wstate
-                [data, dstate] = poll(cprocess,options.timeout);
+                [ydata, dstate] = poll(cprocess,options.timeout);
                 if dstate
-                    if (data.datetime-dt)>seconds(options.duration)
+                    if (ydata.datetime-dt)>seconds(options.duration)
                         wstate = false;
                     else
                         % send(dqlog,sprintf("%s criteria doesn`t fullfil",flabel));
@@ -404,8 +460,8 @@ classdef cfic < handle
                     send(dqterminate,true);
                 end
             end
-            y = data;
-            send(dqprogress,y);
+            y = ydata;
+            send(dqprogress,struct(xdata=xdata,ydata=ydata));
             send(dqlog,sprintf("%s data are polled",flabel));
         else
             send(dqlog,sprintf("%s MCU HTTP POST request is failed, terminate optimization",flabel));
@@ -440,19 +496,19 @@ classdef cfic < handle
             end
             
             send(dqlog,sprintf("%s evaluate reference state",flabel))
-            ref = hfunc(zeros(numel(problem.x0),1));
+            hfunc(zeros(numel(problem.x0),1));
             
-            lab = {'x';'fval';'exitflag';'output'}; res = cell(numel(lab),1);
+            lab = {'x';'fval';'exitflag';'output'}; result = cell(numel(lab),1);
             send(dqlog,sprintf("%s start optimization",flabel))
-            [res{:}] = method(problem);
-            res = cell2struct(res,lab);
+            [result{:}] = method(problem);
+            result = cell2struct(result,lab);
             send(dqlog,sprintf("%s optimization is completed",flabel))
 
             send(dqlog,sprintf("%s evaluate optimal state",flabel))
-            opt = hfunc(res.x);
+            hfunc(result.x);
 
             send(dqlog,sprintf("%s optimization is finished",flabel))
-            send(dqresult,struct(ref=ref,res=res,opt=opt))
+            send(dqresult,result)
         catch ex
             send(dqlog,sprintf("%s optimization if failed: %s",flabel,ex.message))
             send(dqterminate,true);
