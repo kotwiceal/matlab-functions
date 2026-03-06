@@ -14,7 +14,7 @@ c.asyncfileread(true,rmdir=false,test=true)
 c.asyncfileread(false)
 %% test: optimization `interior-point`
 problem = struct;
-index = 0:2;
+index = 0:4;
 problem.x0 = ones(1,numel(index));
 problem.lb = -2*ones(1,numel(index));
 problem.ub = 2*ones(1,numel(index));

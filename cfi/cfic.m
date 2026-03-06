@@ -28,6 +28,8 @@ classdef cfic < handle
 
         dashboard
         result
+
+        opt_folder {mustBeText} = ""
     end
     properties (Access = public)
         %% parallel
@@ -74,6 +76,11 @@ classdef cfic < handle
 
         function getresult(obj,x)
             obj.result.optimization = x;
+            filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
+            filename = fullfile(obj.opt_folder,strcat(filename,'.mat'));
+            data = obj.dashboard.optimization;
+            save(filename,'data')
+            send(obj.dq.log, sprintf("save optimization result to %s",filename))
         end
 
         function asyncfileread(obj,state,options)
@@ -134,6 +141,7 @@ classdef cfic < handle
                 problem (1,1) struct
                 index {mustBeVector}
             end
+            obj.dashboard.optimization = [];
             urlset = obj.mcu_url_set_param;
             urlget = obj.mcu_url_get_param;
             dqlog = obj.dq.log;
@@ -257,18 +265,19 @@ classdef cfic < handle
             obj 
             data (1,1) struct
         end
-        l = 4;
+        l = 3;
         obj.dashboard.optimization = cat(1,obj.dashboard.optimization,data);
         n = numel(obj.dashboard.optimization);
-        if n > 4
+        if n > l
             m = (n-l+1):n;
         else
             m = 1:n;
         end
         xdata = arrayfun(@(x)x.xdata.dac.value,obj.dashboard.optimization,'UniformOutput',false);
         xdata = cat(2,xdata{:}); xdata = xdata(obj.ch_mask_dac,m);
+        k = unique([1,m]);
         ydata = arrayfun(@(x)x.ydata.ymean,obj.dashboard.optimization,'UniformOutput',false);
-        ydata = cat(2,ydata{:}); ydata = ydata(obj.ch_mask_adc,m);
+        ydata = cat(2,ydata{:}); ydata = ydata(obj.ch_mask_adc,k);
 
         ynorm = arrayfun(@(x)x.ydata.ynorm,obj.dashboard.optimization);
 
@@ -281,18 +290,23 @@ classdef cfic < handle
         end
         axs = flip(findobj(t,'type','Axes'));
         arrayfun(@(x)cla(x),axs);
+        colors = colororder;
 
-        ax = axs(1); colors = colororder;
+        ax = axs(1);
         p = plot(ax,xdata,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
         xlabel(ax,'channel'); ylabel(ax,'amplitude')
-        arrayfun(@(p,c)set(p,'Color',[p.Color,c]),p,linspace(0.25,1,numel(p))')
-        subtitle(ax,'actuator'); legend(ax,split(num2str(m)),'Location','southeast')
+        if ~isscalar(p); arrayfun(@(p,c)set(p,'Color',[p.Color,0.25]),p(1:end-1)); end
+        subtitle(ax,'actuator'); l = legend(ax,split(num2str(m)),'Location','eastoutside');
+        title(l,'iteration')
 
-        ax = axs(2); colors = colororder;
-        p = plot(ax,ydata,'.-','Color',colors(1,:),'MarkerFaceColor','auto');
+        ax = axs(2);
+        p = plot(ax,ydata,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
         xlabel(ax,'channel'); ylabel(ax,'amplitude')
-        arrayfun(@(p,c)set(p,'Color',[p.Color,c]),p,linspace(0.25,1,numel(p))')
-        subtitle(ax,'sensor'); legend(ax,split(num2str(m)),'Location','southeast')
+        if ~isscalar(p); arrayfun(@(p,c)set(p,'Color',[p.Color,0.25]),p(1:end-1)); end
+        set(p(1),'Color',colors(2,:));
+        labels = split(num2str(k));
+        subtitle(ax,'sensor'); l = legend(ax,labels,'Location','eastoutside');
+        title(l,'iteration')
 
         ax = axs(3);
         plot(ax,ynorm,'-o','MarkerFaceColor','auto')
@@ -380,7 +394,7 @@ classdef cfic < handle
             pdqpost (1,1) parallel.pool.PollableDataQueue
         end
         arguments (Output)
-            odata (1,1) struct
+            odata (1,:) struct
         end
         d = dbstack; flabel = sprintf("@%s:",d(1).name);
         odata = struct([]);
