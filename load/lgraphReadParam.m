@@ -1,4 +1,4 @@
-function data = lgraphReadPar(filename)
+function data = lgraphReadParam(filename)
 arguments (Input)
     filename {mustBeFile}
 end
@@ -26,8 +26,8 @@ params = {
     {'IsSignalArray', 32 '*uint8'}
     {'DataFormat', 1, '*int32'}
     {'RealKadrs64', 1, '*int64'}
-    {'AdcOffset', 32, '*double'}
     {'AdcScale', 32, '*double'}
+    {'AdcOffset', 32, '*double'}
     {'CalibrScale', 1024, '*double'}
     {'CalibrOffset', 1024, '*double'}
     {'Segments', 1, '*int32'}
