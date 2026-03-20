@@ -420,5 +420,72 @@ methods (Static)
             rethrow(ex)
         end
     end
+    function [ft, ch] = calibrateSensor(data,n,ch,options)
+        % %% example
+        % folder = '\calibration';
+        % data = loadlgraph(folder);
+        % data.n = 120:5:200;
+        % data.ch = [2:12,14:16,18:29,32];
+        arguments (Input)
+            data (:,:,:) % ADC data [channel × sample × rpm]
+            n {mustBeVector} % wind tunnel rpm
+            ch {mustBeVector,mustBeInteger,mustBePositive} % sensor channel
+            options.extend (1,1) logical = true % extend to origin ADC channel size
+            options.folder {mustBeFolder} % to save calibration
+        end
+        arguments (Output)
+            ft (:,1) cell
+            ch {mustBeVector}
+        end
+        u = 0.099*n;
+        dudy = 0.2124*u.^1.591;
+        s = squeeze(mean(data(ch,:,:),2));
+        s = mat2cell(s,ones(1,size(s,1)),size(s,2));
+        % fit
+        ft = cellfun(@(x)fit(x(:),dudy(:),'poly2'),s,'UniformOutput',false);
+        % show results: s(du/dy)
+        f = figure('WindowStyle','docked'); t = tiledlayout(f);
+        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); axis(ax,'square');
+        p = cellfun(@(s)plot(dudy,s,'-o','MarkerFaceColor','auto'),s);
+        c = arrayfun(@(p)p.Color,p,'UniformOutput',false);
+        cellfun(@(f,x,c)plot(f(x),x,'-s','MarkerFaceColor','auto','Color',c),ft,s,c)
+        xlabel(ax,'du/dy, 1/s'); ylabel(ax,'$\bar{s}$, V','Interpreter','latex')
+        l = legend(ax,num2str(ch(:)),'Location','eastoutside','NumColumns',2);
+        title(l,'channel','FontWeight','normal')
+        subtitle(string(datetime));
+        % show results: du/dy(n)
+        f = figure('WindowStyle','docked'); t = tiledlayout(f);
+        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); axis(ax,'square');
+        cellfun(@(f,x)plot(ax,f(x),n,'-s','MarkerFaceColor','auto'),ft,s)
+        xlabel(ax,'du/dy, 1/s'); ylabel(ax,'n, r/m')
+        l = legend(num2str(ch(:)),'Location','eastoutside','NumColumns',2);
+        title(l,'channel','FontWeight','normal')
+        subtitle(string(datetime));
+        % optional
+        if options.extend
+            ind = 1:size(data,1);
+            temp = arrayfun(@(x)@(y)nan(numel(y),1),ind,'UniformOutput',false);
+            temp(ch) = ft; ft = temp(:);
+            ch = ind;
+        end
+        % save fit
+        if isfield(options,'folder')
+            filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
+            filename = fullfile(obj.folder,strcat(filename,'.mat'));
+            save(filename,'ft','ch')
+        end
+    end
+    function y = applySensorCalibration(ft,data)
+        arguments (Input)
+            ft (:,1) cell
+            data (:,:) double
+        end
+        arguments (Output)
+            y (:,:) double
+        end
+        sz = size(data);
+        y = cellfun(@(f,d)f(d),ft(:),mat2cell(data,ones(1,sz(1)),sz(2)),'UniformOutput',false);
+        y = squeeze(cat(ndims(y{1})+1,y{:}));
+    end
 end
 end
