@@ -24,8 +24,7 @@ function varargout = procspecn(data, kwargs)
 
     szd = size(data);
     dimsd = ndims(data);
-    kwargs.winlen(isnan(kwargs.winlen)) = szd(isnan(kwargs.winlen));
-    kwargs.overlap(isnan(kwargs.overlap)) = 0;
+    kwargs.overlap(isnan(kwargs.overlap)) = 1;
     dimsf = numel(kwargs.winlen);
 
     % parse arguments
@@ -46,6 +45,8 @@ function varargout = procspecn(data, kwargs)
     if numel(kwargs.center) ~= dimsf; error('`center` size must be equal `winlen`'); end
 
     if ~(isscalar(kwargs.chdim) | isempty(kwargs.chdim)); error('`chdim` must be empty or scalar'); end
+
+    kwargs.winlen(isnan(kwargs.winlen)) = szd(kwargs.ftdim(isnan(kwargs.winlen)));
 
     kwargs.type = string(kwargs.type);
 

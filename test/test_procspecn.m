@@ -67,10 +67,10 @@ fs = 1./[x(2,2)-x(1,1),y(2,2)-y(1,1)];
 
 f1 = [30, 15];
 z = sin(x*2*pi*f1(1)+y*2*pi*f1(2));
-
+tic
 [spec, f] = procspecn(z,winlen=[64,64],overlap=[32,32], ...
     winfun='hanning',norm=true,fs=fs,side='single',type='power',center=true,avg=true);
-
+toc
 cellplot('contour',{x,f{1}},{y,f{2}},{z,spec},xlabel={'x, m','k_x, m^{-1}'},ylabel={'y, m','k_y, m^{-1}'},...
     xscale='linear',yscale='linear',xlim={[0,1/f1(1)],'auto'},ylim={[0,1/f1(2)],'auto'},colorbar='on',...
     clabel={'z','S_{zz}'},axis='equal');

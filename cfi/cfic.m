@@ -78,13 +78,27 @@ methods (Access = public)
         set(f,'Visible','on'); t = tiledlayout(f); delete(t.Children);
 
         ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
-        cellfun(@(x,i)[plot(1:numel(i),x,'.-'),plot(find(i),x(i),'-o','MarkerFaceColor','auto')],...
-            data.rd,data.rdi,'UniformOutput',false);
-        xlabel(ax,'sample'); ylabel(ax,'amplitude, V'); subtitle(ax,'reference signal');
+        cellfun(@(x,i)[plot(data.time,x,'.-'),plot(data.time(find(i)),x(i),'-o','MarkerFaceColor','auto')],...
+            data.ref,data.refi,'UniformOutput',false);
+        xlabel(ax,'t, s'); ylabel(ax,'amplitude, V'); subtitle(ax,'reference signal');
 
         ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
-        plot(ax,data.ych,data.ymean,'-o','MarkerFaceColor','auto');
-        xlabel(ax,'channel'); ylabel(ax,'amplitude, 1/s'); subtitle('sensor signal')
+        plot(ax,data.freq,data.spec); 
+        l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
+        title(l,'channel','FontWeight','normal');
+        set(ax,'xscale','log','yscale','log');
+        xlabel(ax,'f, Hz'); ylabel(ax,'PSD, (1/s)^2/Hz'); subtitle(ax,'sensor auto-spectra');
+
+        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
+        plot(ax,data.time,data.sens);
+        l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
+        title(l,'channel','FontWeight','normal');
+        xlabel(ax,'t, s'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
+
+        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
+        plot(ax,data.chan,data.zsens,'-o','MarkerFaceColor','auto');
+        xlabel(ax,'channel'); ylabel(ax,'$\overline{du/dy}$, 1/s','Interpreter','latex'); 
+        subtitle('spanwise sensor signal')
         
         sgtitle(f,string(datetime))
     end
@@ -96,24 +110,6 @@ methods (Access = public)
         end
         data = cfic.hexite(x,i,obj.ac,obj.mcu,obj.lcard,obj.process,obj.bsize,parallel.pool.DataQueue);
     end
-    function complete(obj,x)
-        obj.pdq.postprocess.close;
-        % save results
-        filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
-        filename = fullfile(obj.folder,strcat(filename,'.mat'));
-        data = obj.result;
-        optres = x;
-        save(filename,'data','optres')
-        send(obj.dq.log, sprintf("save optimization result to %s",filename))
-        % modify optimization figure
-        colors = colororder; color = colors(5,:);
-        f = obj.figures.optimization;
-        ax = flip(findobj(f,'type','Axes'));
-        ax(1).Children(1).Color = color;
-        ax(2).Children(1).Color = color;
-        yline(ax(3),x.fval,'-','optimum','LabelHorizontalAlignment','right',...
-            'Color',color)
-    end
     function optimize(obj,problem,index,options)
         arguments
             obj 
@@ -121,22 +117,20 @@ methods (Access = public)
             index {mustBeVector}
             options.parallel (1,1) logical = false
         end
-        % define actuator handle
-        function y = xfunc(m,x,i,ac)
-            ac = ac(:);
-            x = ac(i).*x(:);
-            m.set(struct(dac=struct(value=x,index=i-1)));
-            y = m.get();
-        end
+        % reset
         obj.bdata = {}; obj.result = [];
+        % wrap by constant
         cmcu = parallel.pool.Constant(obj.mcu);
         clcard = parallel.pool.Constant(obj.lcard);
-        % define sensor handle
-        yfunc = @(l,p,b) p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
+
         % stack args
         acalib = obj.ac;
-        args = {cmcu,clcard,problem,@(m,x,i)xfunc(m,x,index,acalib),...
-            @(l)yfunc(l,obj.process,obj.bsize),obj.dq.log,obj.dq.progress,obj.dq.terminate,obj.dq.complete};
+        dqprogress = obj.dq.progress;
+        bsize = obj.bsize;
+        process = obj.process;
+        exite = @(x,m,l)cfic.hexite(x,index,acalib,m,l,process,bsize,dqprogress);
+        args = {cmcu,clcard,problem,exite,obj.dq.log,obj.dq.terminate,obj.dq.complete};
+
         if options.parallel
             % create pool
             if isa(gcp('nocreate'),'parallel.ProcessPool')
@@ -170,13 +164,13 @@ methods (Access = public)
         l = 3;
         n = numel(obj.result);
         if n > l; m = (n-l+1):n; else; m = 1:n; end
-        xdata = cellfun(@(x)x.xdata.dac.value,obj.result,'UniformOutput',false);
+        xdata = cellfun(@(x)x.actuator.dac.value,obj.result,'UniformOutput',false);
         xdata = cat(2,xdata{:}); xdata = xdata(:,m);
         k = unique([1,m]);
-        ydata = cellfun(@(x)x.ydata.ymean,obj.result,'UniformOutput',false);
+        ydata = cellfun(@(x)x.sensor.zsens,obj.result,'UniformOutput',false);
         ydata = cat(2,ydata{:}); ydata = ydata(:,k);
 
-        ynorm = cellfun(@(x)x.ydata.ynorm,obj.result);
+        objval = cellfun(@(x)x.sensor.objval,obj.result);
 
         flabel = 'optimization';
         f = obj.figures.(flabel); 
@@ -210,9 +204,38 @@ methods (Access = public)
         title(l,'iteration')
 
         ax = axs(3);
-        plot(ax,ynorm,'-o','MarkerFaceColor','auto')
-        yline(ax,ynorm(1),'-','reference','LabelHorizontalAlignment','left','Color',colors(2,:));
+        plot(ax,objval,'-o','MarkerFaceColor','auto')
+        yline(ax,objval(1),'-','reference','LabelHorizontalAlignment','left','Color',colors(2,:));
         xlabel('iteration'); ylabel('objective function')
+    end
+    function complete(obj,x)
+        obj.pdq.postprocess.close;
+        % save results
+        filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
+        filename = fullfile(obj.folder,strcat(filename,'.mat'));
+        data = obj.result;
+        optres = x;
+        save(filename,'data','optres')
+        send(obj.dq.log, sprintf("save optimization result to %s",filename))
+        % modify optimization figure
+        colors = colororder; color = colors(5,:);
+        f = obj.figures.optimization;
+        ax = flip(findobj(f,'type','Axes'));
+        ax(1).Children(1).Color = color;
+        ax(2).Children(1).Color = color;
+        yline(ax(3),x.fval,'-','optimum','LabelHorizontalAlignment','right',...
+            'Color',color)
+    end
+    function y = actuate(obj,x,i)
+        arguments (Input)
+            obj 
+            x {mustBeVector}
+            i {mustBeVector}
+        end
+        arguments (Output)
+            y (1,1) struct
+        end
+        y = cfic.hactuate(obj.mcu,x,i,obj.ac);
     end
     function delete(obj)
         structfun(@(x)cancel(x),obj.ff)
@@ -220,12 +243,27 @@ methods (Access = public)
     end
 end
 methods (Static)
+    function y = hactuate(m,x,i,ac)
+        arguments (Input)
+            m mcu
+            x {mustBeVector} % amplitudes
+            i {mustBeVector} % channels
+            ac {mustBeVector} % calibration
+        end
+        arguments (Output)
+            y (1,1) struct
+        end
+        ac = ac(:);
+        x = ac(i).*x(:);
+        m.set(struct(dac=struct(value=x,index=i-1)));
+        y = m.get();
+    end
     function y = hprocess(x,options)
         arguments (Input)
             x (1,:) cell % data
             options.sch {mustBeVector} % sensor channel
             options.sel {mustBeMember(options.sel,{'phase','all'})} = 'phase' % select sample index mode
-            options.proc {mustBeMember(options.proc,{'mean','var'})} = 'mean' % process method
+            options.proc {mustBeMember(options.proc,{'mean','var'})} = 'mean' % sample process method
             options.norm (1,1) {mustBeInteger,mustBePositive} = 2 % norm order
             options.si (1,:) {mustBeInteger,mustBePositive} = 1:32 % signal indexes
             options.rch (1,1) {mustBeInteger,mustBePositive} = 1 % reference signal index
@@ -234,10 +272,14 @@ methods (Static)
             options.ft (1,:) cell % calibration fit object
             options.fch {mustBeVector} % calibration fit channel
             options.fillmissing {mustBeMember(options.fillmissing,{'','linear','nearest'})} = 'nearest'
+            options.fs (1,1) double = 1 % sample frequency
+            options.winlen (1,:) double = nan % fft window length
+            options.overlap (1,:) double = nan % fft window overlap
         end
         arguments (Output)
             y (1,1) struct
         end
+        n = numel(options.si); fs = options.fs/n;
         % get sensor signal index;
         if isfield(options,'sch')
             sch = options.sch;
@@ -246,8 +288,35 @@ methods (Static)
         end
         % get reference data
         rd = cellfun(@(x)x(options.rch,:),x,'UniformOutput',false);
-        % get sensor data
-        sd = cellfun(@(x)x(sch,:),x,'UniformOutput',false);
+        % cell split by channels
+        sd = cellfun(@(x)mat2cell(x,ones(1,size(x,1)),size(x,2)),x,'UniformOutput',false);
+        % appply sensor calibration
+        if isfield(options,'ft')
+            ft = options.ft;
+            if isfield(options,'fch')
+                temp = repmat({@(x)nan(size(x))},n,1);
+                temp(options.fch) = ft; ft = temp;
+            else
+                error('fit cell array size must be same ADC channels')
+            end
+        else
+            ft = repmat({@(x)nan(size(x))},n,1);
+            ft(sch) = repmat({@(x)x},numel(sch),1);
+        end
+        sd = cellfun(@(x)cellfun(@(f,y)reshape(f(y),size(y)),ft,x,'UniformOutput',false),sd,'UniformOutput',false);
+        % concatenate by channels
+        sd = cellfun(@(x)squeeze(cat(ndims(x{1})+1,x{:})),sd,'UniformOutput',false);
+        % to store one batch
+        sens = sd{1}; time = 0:1/fs:1/fs*(size(sens,1)-1);
+        % precess auto-spectra
+        spec = squeeze(cat(ndims(sd{1})+1,sd{:})); 
+        ind = isnan(spec); spec(ind) = 0;
+        [spec,freq] = procspecn(spec,'ftdim',1,...
+            'winlen',options.winlen,'overlap',options.overlap,...
+            'side','single','type','psd','fs',fs,'norm',true,'center',true);
+        % spec(ind) = nan;
+        % batch average
+        spec = mean(spec,3); 
         % select sample index
         switch options.sel
             case 'phase'
@@ -255,41 +324,34 @@ methods (Static)
             case 'all'
                 rdi = cellfun(@(x)true(1,numel(x)),rd,'UniformOutput',false);
         end
+        % select semple process method
         switch options.proc
             case 'mean'
-                fnc = @(x)mean(x,2);
+                fnc = @(x)mean(x,1);
             case 'var'
-                fnc = @(x)sqrt(var(x,[],2));
+                fnc = @(x)sqrt(var(x,[],1));
         end
         % phase/all sample processing by given method
-        sd = cellfun(@(x,i)fnc(x(:,i)),sd,rdi,'UniformOutput',false);
+        sd = cellfun(@(x,i)fnc(x(i,:)),sd,rdi,'UniformOutput',false);
         % batch average
         sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),2);
-        % apply calibration to sensor data
-        if isfield(options,'ft')
-            if isfield(options,'fch')
-                [options.fch, index] = sort(options.fch);
-                options.ft = options.ft(index);
-                index = ismember(sch,options.fch);
-                sd = sd(index);
-                sch = options.fch;
-            end
-            sd = cellfun(@(f,x)f(x),options.ft(:),num2cell(sd(:)));
-        end
-        % extend channels
-        temp = nan(numel(options.si),1); temp(sch,:) = sd; sd = temp;
+        % fill missing
         if ~isempty(options.fillmissing)
             sd = fillmissing(sd,options.fillmissing);
         end
         sch = options.si;
         % store
         y = struct;
-        y.ydata = cat(ndims(x{1})+1,x{:});
-        y.rd = rd;
-        y.rdi = rdi;
-        y.ych = sch;
-        y.ymean = sd;
-        y.ynorm = norm(y.ymean,options.norm);
+        y.adc = cat(ndims(x{1})+1,x{:});
+        y.ref = rd(1); % reference signal data
+        y.refi = rdi(1); % reference signal index
+        y.chan = sch; % sensor channel idnexes
+        y.zsens = sd; % batch and sample averaged transversal amplitude profile
+        y.objval = norm(y.zsens,options.norm); % objective function value
+        y.spec = spec; % auto-spectra
+        y.freq = freq; % frequency vector
+        y.sens = sens; % sensor sample data
+        y.time = time; % time vector
     end
     function data = hexite(x,i,ac,m,l,p,b,dq,options)
         arguments (Input)
@@ -306,88 +368,26 @@ methods (Static)
         arguments (Output)
             data (1,1) struct
         end
-        % define actuator handle
-        function y = xfnc(m,x,i)
-            ac = ac(:);
-            x = ac(i).*x(:);
-            m.set(struct(dac=struct(value=x,index=i-1)));
-            y = m.get();
-        end
-        % define sensor handle
-        yfnc = @(l,p,b)p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
-        x = xfnc(m,x,i);
+        x = cfic.hactuate(m,x,i,ac);
         pause(options.pause)
-        y = yfnc(l,p,b);
-        data = struct(xdata=x,ydata=y);
+        y = p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
+        data = struct(actuator=x,sensor=y);
         arrayfun(@(q)send(q,data),dq);
     end
-    function y = ysync(pdqdata,dqlog,dqterminate,options)
-        arguments (Input)
-            pdqdata (1,1) parallel.pool.PollableDataQueue
-            dqlog (1,1) parallel.pool.DataQueue
-            dqterminate (1,1) parallel.pool.DataQueue
-            options.duration (1,1) double = 2
-            options.datafail (1,1) {mustBeInteger} = 4
-            options.timeout (1,1) {mustBePositive} = 60
-        end
-        arguments (Output)
-            y (1,1) struct
-        end
-        wstate = true;
-        dt = datetime;
-        while wstate
-            [ydata, dstate] = poll(pdqdata,options.timeout);
-            if dstate
-                if (ydata.datetime-dt)>seconds(options.duration)
-                    wstate = false;
-                end
-            else
-                options.datafail = options.datafail - 1;
-                send(dqlog,sprintf("%s poll `process` is failed, try again, %d attempt(s) left",flabel,options.datafail));
-            end
-            if options.datafail == 0
-                send(dqlog,sprintf("%s poll `process` is failed, terminate optimization",flabel));
-                send(dqterminate,true);
-            end
-        end
-        y = ydata;
-    end
-    function y = xysync(x,xfunc,yfunc,dqprogress,options)
-        arguments (Input)
-            x {mustBeVector} % actuator control vector
-            xfunc (1,1) function_handle % actuator function handle
-            yfunc (1,1) function_handle % sensor function handle
-            dqprogress (1,1) parallel.pool.DataQueue % send to progress dashboard
-            options.pause {mustBePositive} = 0.5
-        end
-        arguments (Output)
-            y (1,1) struct
-        end
-        x = xfunc(x);
-        pause(options.pause)
-        y = yfunc();
-        send(dqprogress,struct(xdata=x,ydata=y));
-    end
-    function optimization(m,l,problem,xfunc,yfunc,dqlog,dqprogress,dqterminate,dqcomplete)
+    function optimization(m,l,problem,exite,dqlog,dqterminate,dqcomplete)
         arguments
             m mcu
             l lcard
             problem (1,1) struct
-            xfunc function_handle
-            yfunc function_handle
+            exite function_handle
             dqlog (1,1) parallel.pool.DataQueue % to log
-            dqprogress (1,1) parallel.pool.DataQueue % to visualize progress
             dqterminate (1,1) parallel.pool.DataQueue % to terminate execution
             dqcomplete (1,1) parallel.pool.DataQueue % to send result to main worker
         end
         d = dbstack; flabel = sprintf("@%s:",d(1).name);
         try
-            % args = namedargs2cell(l.adc);
-            % l.release();
-            % l.initialize();
-            % l.adcconf(args{:});
-            hfunc = @(x)cfic.xysync(x,@(x)xfunc(m,x),@()yfunc(l),dqprogress);
-            fobj = @(x)getfield(hfunc(x),'ynorm'); % objective function
+            exite = @(x)exite(x,m,l);
+            fobj = @(x)getfield(getfield(exite(x),'sensor'),'objval'); % objective function
             switch class(problem.options)
                 case 'optim.options.Fmincon'
                     method = @fmincon;
@@ -401,7 +401,7 @@ methods (Static)
             end
             
             send(dqlog,sprintf("%s evaluate reference state",flabel))
-            hfunc(zeros(numel(problem.x0),1));
+            exite(zeros(numel(problem.x0),1));
             
             lab = {'x';'fval';'exitflag';'output'}; result = cell(numel(lab),1);
             send(dqlog,sprintf("%s start optimization",flabel))
@@ -410,7 +410,7 @@ methods (Static)
             send(dqlog,sprintf("%s optimization is completed",flabel))
 
             send(dqlog,sprintf("%s evaluate optimal state",flabel))
-            hfunc(result.x);
+            exite(result.x);
 
             send(dqlog,sprintf("%s optimization is finished",flabel))
             send(dqcomplete,result)
