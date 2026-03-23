@@ -71,16 +71,25 @@ methods (Access = public)
         offset = data.dac_offset.value;
 
         flabel = 'mcu';
-        f = obj.figures.(flabel); 
+        f = obj.figures.(flabel);
         if ~isvalid(f)
             f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
             obj.figures.(flabel) = f; 
         end
-        set(f,'Visible','on'); t = tiledlayout(f);
-        delete(t.Children)
-        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on');
+        set(f,'Visible','on'); t = f.Children;
+        if isempty(t)
+            t = tiledlayout(f);
+            if isempty(t.Children)
+                arrayfun(@(x)set(nexttile(t),'Box','on','XGrid','on','YGrid','on'),1:2)
+                arrayfun(@(x)hold(x,'on'),t.Children)
+            end
+        end
+        axs = flip(findobj(t,'type','Axes'));
+        arrayfun(@(x)cla(x),axs);
+
+        ax = axs(1);
         bar(ax,amplitude); xlabel(ax,'channel'); ylabel(ax,'amplitude');
-        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on');
+        ax = axs(2);
         bar(ax,offset); xlabel(ax,'channel'); ylabel(ax,'offset');
         sgtitle(f,string(datetime))
     end

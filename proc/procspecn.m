@@ -86,7 +86,8 @@ function varargout = procspecn(data, kwargs)
     kernel = nan(1, dimsd); kernel(kwargs.ftdim) = kwargs.winlen(kwargs.ftdim);
     stride = ones(1, dimsd); stride(kwargs.ftdim) = kwargs.overlap;
     offset = zeros(1, dimsd); offset(kwargs.ftdim) = kwargs.offset;
-    spec = nonlinfilt(@specker, data, kernel = kernel, stride = stride, offset = offset, padval = false);
+    padval = false(1, dimsd); padval(kwargs.ftdim) = true; padval = num2cell(padval);
+    spec = nonlinfilt(@specker, data, kernel = kernel, stride = stride, offset = offset, padval = padval);
     dimss = ndims(spec);
     dimsb = setdiff(1:dimss, 1:dimsd);
     if isempty(dimsb); dimsb = ndims(spec); end

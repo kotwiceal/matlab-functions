@@ -252,9 +252,19 @@ classdef lcard < handle
                 f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
                 obj.figures.(flabel) = f; 
             end
-            set(f,'Visible','on'); t = tiledlayout(f);
-            delete(t.Children); ax = nexttile(t);
-            cla(ax); hold(ax,'on'); box(ax,'on'); grid(ax,'on');
+            set(f,'Visible','on'); t = f.Children;
+            if isempty(t)
+                t = tiledlayout(f);
+                if isempty(t.Children)
+                    arrayfun(@(x)set(nexttile(t),'Box','on','XGrid','on','YGrid','on'),1)
+                    arrayfun(@(x)hold(x,'on'),t.Children)
+                    arrayfun(@(x)pbaspect(x,[2,1,1]),t.Children)
+                end
+            end
+            axs = flip(findobj(t,'type','Axes'));
+            arrayfun(@(x)cla(x),axs);
+
+            ax = axs(1);
             plot(ax,data'); xlabel('sample'); ylabel('amplitude, V');
             channel = 1:size(data,1);
             l = legend(ax,string(num2str(channel(:))),'Location','eastoutside','NumColumns',2);

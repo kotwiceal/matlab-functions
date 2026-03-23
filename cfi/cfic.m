@@ -21,6 +21,7 @@ properties (Access = private)
     ffl (:,1) cell = {'process';'optimize'} % feval future label
     figl (:,1) cell = {'postprocess';'optimization'} % figure labels
     ladc struct % LCard ADC parameters
+    temporary struct = struct(x=[],y=[],v=[])
 end
 methods (Access = public)
     function  obj = cfic(folder)
@@ -75,31 +76,41 @@ methods (Access = public)
             f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
             obj.figures.(flabel) = f; 
         end
-        set(f,'Visible','on'); t = tiledlayout(f); delete(t.Children);
+        set(f,'Visible','on'); t = f.Children;
+        if isempty(t)
+            t = tiledlayout(f);
+            if isempty(t.Children)
+                arrayfun(@(x)set(nexttile(t),'Box','on','XGrid','on','YGrid','on'),1:4)
+                arrayfun(@(x)hold(x,'on'),t.Children)
+                arrayfun(@(x)pbaspect(x,[2,1,1]),t.Children)
+            end
+        end
+        axs = flip(findobj(t,'type','Axes'));
+        arrayfun(@(x)cla(x),axs);
 
-        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
-        cellfun(@(x,i)[plot(data.time,x,'.-'),plot(data.time(find(i)),x(i),'-o','MarkerFaceColor','auto')],...
+        ax = axs(1);
+        cellfun(@(x,i)[plot(ax,data.time,x,'.-'),plot(ax,data.time(find(i)),x(i),'-o','MarkerFaceColor','auto')],...
             data.ref,data.refi,'UniformOutput',false);
         xlabel(ax,'t, s'); ylabel(ax,'amplitude, V'); subtitle(ax,'reference signal');
 
-        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
+        ax = axs(2);
         plot(ax,data.freq,data.spec); 
         l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
         title(l,'channel','FontWeight','normal');
         set(ax,'xscale','log','yscale','log');
         xlabel(ax,'f, Hz'); ylabel(ax,'PSD, (1/s)^2/Hz'); subtitle(ax,'sensor auto-spectra');
 
-        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
+        ax = axs(3);
         plot(ax,data.time,data.sens);
         l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
         title(l,'channel','FontWeight','normal');
         xlabel(ax,'t, s'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
 
-        ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); pbaspect([2,1,1]);
+        ax = axs(4);
         plot(ax,data.chan,data.zsens,'-o','MarkerFaceColor','auto');
         xlabel(ax,'channel'); ylabel(ax,'$\overline{du/dy}$, 1/s','Interpreter','latex'); 
-        subtitle('spanwise sensor signal')
-        
+        subtitle(ax,'spanwise sensor signal')
+
         sgtitle(f,string(datetime))
     end
     function data = exite(obj,x,i)
@@ -118,7 +129,7 @@ methods (Access = public)
             options.parallel (1,1) logical = false
         end
         % reset
-        obj.bdata = {}; obj.result = [];
+        obj.bdata = {}; obj.result = []; obj.temporary = struct(x=[],y=[],v=[]);
         % wrap by constant
         cmcu = parallel.pool.Constant(obj.mcu);
         clcard = parallel.pool.Constant(obj.lcard);
@@ -164,13 +175,14 @@ methods (Access = public)
         l = 3;
         n = numel(obj.result);
         if n > l; m = (n-l+1):n; else; m = 1:n; end
-        xdata = cellfun(@(x)x.actuator.dac.value,obj.result,'UniformOutput',false);
-        xdata = cat(2,xdata{:}); xdata = xdata(:,m);
         k = unique([1,m]);
-        ydata = cellfun(@(x)x.sensor.zsens,obj.result,'UniformOutput',false);
-        ydata = cat(2,ydata{:}); ydata = ydata(:,k);
 
-        objval = cellfun(@(x)x.sensor.objval,obj.result);
+        xch = obj.result{1}.actuator.channel;
+        obj.temporary.x = cat(2, obj.temporary.x, obj.result{end}.actuator.action(:));
+        x = obj.temporary.x(:,m);
+        obj.temporary.y = cat(2, obj.temporary.y, obj.result{end}.sensor.zsens(:)); 
+        y = obj.temporary.y(:,k);
+        obj.temporary.v = cat(2, obj.temporary.v, obj.result{end}.sensor.objval);
 
         flabel = 'optimization';
         f = obj.figures.(flabel); 
@@ -178,24 +190,27 @@ methods (Access = public)
             f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
             obj.figures.(flabel) = f; 
         end
-        set(f,'Visible','on'); t = tiledlayout(f); delete(t.Children);
-        if isempty(t.Children)
-            arrayfun(@(x)set(nexttile(t),'Box','on','XGrid','on','YGrid','on'),1:3)
-            arrayfun(@(x)hold(x,'on'),t.Children)
+        set(f,'Visible','on'); t = f.Children;
+        if isempty(t)
+            t = tiledlayout(f);
+            if isempty(t.Children)
+                arrayfun(@(x)set(nexttile(t),'Box','on','XGrid','on','YGrid','on'),1:3)
+                arrayfun(@(x)hold(x,'on'),t.Children)
+            end
         end
         axs = flip(findobj(t,'type','Axes'));
         arrayfun(@(x)cla(x),axs);
         colors = colororder;
 
         ax = axs(1);
-        p = plot(ax,xdata,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
+        p = plot(ax,xch,x,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
         xlabel(ax,'channel'); ylabel(ax,'amplitude')
         if ~isscalar(p); arrayfun(@(p,c)set(p,'Color',[p.Color,0.25]),p(1:end-1)); end
         subtitle(ax,'actuator'); l = legend(ax,split(num2str(m)),'Location','eastoutside');
         title(l,'iteration')
 
         ax = axs(2);
-        p = plot(ax,ydata,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
+        p = plot(ax,y,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
         xlabel(ax,'channel'); ylabel(ax,'amplitude')
         if ~isscalar(p); arrayfun(@(p,c)set(p,'Color',[p.Color,0.25]),p(1:end-1)); end
         set(p(1),'Color',colors(2,:));
@@ -204,9 +219,11 @@ methods (Access = public)
         title(l,'iteration')
 
         ax = axs(3);
-        plot(ax,objval,'-o','MarkerFaceColor','auto')
-        yline(ax,objval(1),'-','reference','LabelHorizontalAlignment','left','Color',colors(2,:));
+        plot(ax,obj.temporary.v,'-o','MarkerFaceColor','auto')
+        yline(ax,obj.temporary.v(1),'-','reference','LabelHorizontalAlignment','left','Color',colors(2,:));
         xlabel('iteration'); ylabel('objective function')
+
+        sgtitle(f,string(datetime))
     end
     function complete(obj,x)
         obj.pdq.postprocess.close;
@@ -263,6 +280,8 @@ methods (Static)
             x (1,:) cell % data
             options.sch {mustBeVector} % sensor channel
             options.sel {mustBeMember(options.sel,{'phase','all'})} = 'phase' % select sample index mode
+            options.selalg {mustBeMember(options.selalg,{'isapprox','islocalmax'})} = 'islocalmax' % select sample algorithm
+            options.idxshft (1,1) double = 0 % index shift
             options.proc {mustBeMember(options.proc,{'mean','var'})} = 'mean' % sample process method
             options.norm (1,1) {mustBeInteger,mustBePositive} = 2 % norm order
             options.si (1,:) {mustBeInteger,mustBePositive} = 1:32 % signal indexes
@@ -313,14 +332,20 @@ methods (Static)
         ind = isnan(spec); spec(ind) = 0;
         [spec,freq] = procspecn(spec,'ftdim',1,...
             'winlen',options.winlen,'overlap',options.overlap,...
-            'side','single','type','psd','fs',fs,'norm',true,'center',true);
-        % spec(ind) = nan;
+            'side','single','type','psd','fs',fs,'norm',true,'center',true,'avg',true);
         % batch average
         spec = mean(spec,3); 
         % select sample index
         switch options.sel
             case 'phase'
-                rdi = cellfun(@(x)isapprox(x,options.thr,'RelativeTolerance',options.rtol),rd,'UniformOutput',false);
+                switch options.selalg
+                    case 'isapprox'
+                        rdi = cellfun(@(x)isapprox(x,options.thr,'RelativeTolerance',options.rtol),rd,'UniformOutput',false);
+                    case 'islocalmax'
+                        rdi = cellfun(@(x)islocalmax(x),rd,'UniformOutput',false);
+                end
+                % shift index
+                rdi = cellfun(@(x)ismember(1:numel(x),find(x)+options.idxshft),rdi,'UniformOutput',false);
             case 'all'
                 rdi = cellfun(@(x)true(1,numel(x)),rd,'UniformOutput',false);
         end
@@ -334,7 +359,7 @@ methods (Static)
         % phase/all sample processing by given method
         sd = cellfun(@(x,i)fnc(x(i,:)),sd,rdi,'UniformOutput',false);
         % batch average
-        sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),2);
+        sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),1,'omitmissing');
         % fill missing
         if ~isempty(options.fillmissing)
             sd = fillmissing(sd,options.fillmissing);
@@ -347,13 +372,13 @@ methods (Static)
         y.refi = rdi(1); % reference signal index
         y.chan = sch; % sensor channel idnexes
         y.zsens = sd; % batch and sample averaged transversal amplitude profile
-        y.objval = norm(y.zsens,options.norm); % objective function value
+        y.objval = norm(y.zsens(~isnan(y.zsens)),options.norm); % objective function value
         y.spec = spec; % auto-spectra
         y.freq = freq; % frequency vector
         y.sens = sens; % sensor sample data
         y.time = time; % time vector
     end
-    function data = hexite(x,i,ac,m,l,p,b,dq,options)
+    function data = hexite(x,i,ac,m,l,p,b,dq)
         arguments (Input)
             x {mustBeVector} % actuator control vector
             i {mustBeVector} % actuator index
@@ -363,15 +388,14 @@ methods (Static)
             p function_handle % process handle
             b (1,1) {mustBeInteger,mustBePositive} % batch size
             dq (1,:) parallel.pool.DataQueue % send to data queue
-            options.pause {mustBePositive} = 0.5 % delay between action and response
         end
         arguments (Output)
             data (1,1) struct
         end
-        x = cfic.hactuate(m,x,i,ac);
-        pause(options.pause)
-        y = p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
-        data = struct(actuator=x,sensor=y);
+        xdata = cfic.hactuate(m,x,i,ac);
+        xdata.action = x; xdata.channel = i;
+        ydata = p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
+        data = struct(actuator=xdata,sensor=ydata);
         arrayfun(@(q)send(q,data),dq);
     end
     function optimization(m,l,problem,exite,dqlog,dqterminate,dqcomplete)
@@ -478,13 +502,13 @@ methods (Static)
     function y = applySensorCalibration(ft,data)
         arguments (Input)
             ft (:,1) cell
-            data (:,:) double
+            data (:,:) double %  [channel × sample]
         end
         arguments (Output)
             y (:,:) double
         end
         sz = size(data);
-        y = cellfun(@(f,d)f(d),ft(:),mat2cell(data,ones(1,sz(1)),sz(2)),'UniformOutput',false);
+        y = cellfun(@(f,d)reshape(f(d),size(d)),ft(:),mat2cell(data,ones(1,sz(1)),sz(2)),'UniformOutput',false);
         y = squeeze(cat(ndims(y{1})+1,y{:}));
     end
 end
