@@ -7,7 +7,7 @@ properties (Access = public)
     bsize (1,1) {mustBeInteger, mustBePositive} = 1 % batch size
     bdata (1,:) cell % batch data
     pdata struct % process data
-    process function_handle = @(x)struct(ymean=mean(cat(ndims(x{1}),x{:}),[2,3])); % sensor data process function handle 
+    process function_handle = @(x)struct(zsens=mean(cat(ndims(x{1}),x{:}),[2,3])); % sensor data process function handle 
     result (1,:) cell % optimization result
     pool parallel.Pool
     dq struct % data queue
@@ -107,9 +107,10 @@ methods (Access = public)
         xlabel(ax,'t, s'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
 
         ax = axs(4);
-        plot(ax,data.chan,data.zsens,'-o','MarkerFaceColor','auto');
-        xlabel(ax,'channel'); ylabel(ax,'$\overline{du/dy}$, 1/s','Interpreter','latex'); 
+        xlabel(ax,'channel'); ylabel(ax,'<du/dy>, 1/s'); 
         subtitle(ax,'spanwise sensor signal')
+        plot(ax,data.chan,data.zsens,'-o','MarkerFaceColor','auto');
+        plot(ax,data.chan,rescale(data.winfun,min(data.zsens(:)),max(data.zsens(:))));
 
         sgtitle(f,string(datetime))
     end
@@ -204,19 +205,22 @@ methods (Access = public)
 
         ax = axs(1);
         p = plot(ax,xch,x,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
+        set(p(end),'MarkerFaceColor',get(p(end),'Color'));
         xlabel(ax,'channel'); ylabel(ax,'amplitude')
+        arrayfun(@(p,c)set(p,'MarkerSize',3),p(1:end-1));
         if ~isscalar(p); arrayfun(@(p,c)set(p,'Color',[p.Color,0.25]),p(1:end-1)); end
         subtitle(ax,'actuator'); l = legend(ax,split(num2str(m)),'Location','eastoutside');
-        title(l,'iteration')
+        title(l,'iteration','FontWeight','normal')
 
         ax = axs(2);
         p = plot(ax,y,'-o','Color',colors(1,:),'MarkerFaceColor','auto');
         xlabel(ax,'channel'); ylabel(ax,'amplitude')
         if ~isscalar(p); arrayfun(@(p,c)set(p,'Color',[p.Color,0.25]),p(1:end-1)); end
-        set(p(1),'Color',colors(2,:));
+        set(p(1),'Color',colors(2,:),'MarkerFaceColor',colors(2,:)); set(p(end),'MarkerFaceColor',get(p(end),'Color'));
+        arrayfun(@(p,c)set(p,'MarkerSize',3),p(2:end));
         labels = split(num2str(k));
         subtitle(ax,'sensor'); l = legend(ax,labels,'Location','eastoutside');
-        title(l,'iteration')
+        title(l,'iteration','FontWeight','normal')
 
         ax = axs(3);
         plot(ax,obj.temporary.v,'-o','MarkerFaceColor','auto')
@@ -254,6 +258,64 @@ methods (Access = public)
         end
         y = cfic.hactuate(obj.mcu,x,i,obj.ac);
     end
+    function response = identify(obj,amplitude,options)
+        arguments (Input)
+            obj
+            amplitude {mustBeVector}
+            options.ach {mustBeVector} = 1:32 % actuator channel
+            options.folder {mustBeFolder}
+        end
+        ach = options.ach;
+        action = eye(numel(ach));
+        action = mat2cell(action,ones(1,size(action,1)),size(action,2));
+        action = cell2mat(repelem(action,numel(amplitude))).*repmat(amplitude(:),numel(ach),1);
+
+        d = dbstack; flabel = sprintf("@%s:",d(1).name);
+        send(obj.dq.log,sprintf("%s evaluate reference state",flabel))
+        response = struct;
+        response.reference = obj.exite(zeros(1,32),1:32);
+        send(obj.dq.log,sprintf("%s evaluate actuating state",flabel))
+        action = mat2cell(action,ones(1,size(action,1)),size(action,2));
+        response.actuate = cellfun(@(x)obj.exite(x,options.ach),action,'UniformOutput',false);
+        obj.actuate(zeros(1,32),1:32)
+
+        sch = response.reference.sensor.sch;
+        y = response.reference.sensor.zsens(sch);
+        y = y(:);
+        P = cellfun(@(x)x.sensor.zsens(sch),response.actuate,'UniformOutput',false);
+        P = squeeze(cat(ndims(P{1})+1,P{:}));
+        P = P - y;
+        P = reshape(P,sch,ach,[]);
+
+        response = struct(P=P,ach=ach,sch=sch,amp=amplitude);
+
+        if isfield(options,'folder')
+            filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
+            filename = fullfile(options.folder,strcat(filename,'.mat'));
+            save(filename,'response')
+            fprintf('save results into %s\n',filename)
+        end
+    end
+    function data = estimateNoise(obj,number)
+        arguments
+            obj
+            number (1,1) double
+        end
+        data = arrayfun(@(x)obj.exite(zeros(1,32),1:32),1:number,'UniformOutput',false);
+        objval = cellfun(@(x)x.sensor.objval,data);
+        
+        objvalm = mean(objval,"all");
+        objvalr = sqrt(var(objval,[],"all"));
+        fprintf("number estimation=%d; mean=%f; variance=%f\n",number,objvalm,objvalr)
+        
+        figure('WindowStyle','docked'); hold on; box on; grid on; axis square;
+        [bmin,bmax] = bounds(objval(:)); b = linspace(bmin,bmax,numel(objval));
+        [n,e] = histcounts(objval,b,'Normalization','count'); e = e(2:end)-diff(e,1,2);
+        plot(e,n,'-o','MarkerFaceColor','auto'); xlabel('objective function'); ylabel('count');
+        subtitle('statisitcs');
+        xline(objvalm,'-','mean');
+        xregion(objvalm-objvalr/2,objvalm+objvalr/2)
+    end
     function delete(obj)
         structfun(@(x)cancel(x),obj.ff)
         structfun(@(x)delete(x),obj.dq)
@@ -270,8 +332,8 @@ methods (Static)
         arguments (Output)
             y (1,1) struct
         end
-        ac = ac(:);
-        x = ac(i).*x(:);
+        t = zeros(size(ac)); t(i) = x;
+        x = ac(:).*t(:);
         m.set(struct(dac=struct(value=x,index=i-1)));
         y = m.get();
     end
@@ -282,6 +344,7 @@ methods (Static)
             options.sel {mustBeMember(options.sel,{'phase','all'})} = 'phase' % select sample index mode
             options.selalg {mustBeMember(options.selalg,{'isapprox','islocalmax'})} = 'islocalmax' % select sample algorithm
             options.idxshft (1,1) double = 0 % index shift
+            options.phshft (1,1) double = 0 % phase shift [deg]
             options.proc {mustBeMember(options.proc,{'mean','var'})} = 'mean' % sample process method
             options.norm (1,1) {mustBeInteger,mustBePositive} = 2 % norm order
             options.si (1,:) {mustBeInteger,mustBePositive} = 1:32 % signal indexes
@@ -294,6 +357,9 @@ methods (Static)
             options.fs (1,1) double = 1 % sample frequency
             options.winlen (1,:) double = nan % fft window length
             options.overlap (1,:) double = nan % fft window overlap
+            options.subref {mustBeVector}
+            options.center (1,1) logical = true
+            options.winfun {mustBeVector}
         end
         arguments (Output)
             y (1,1) struct
@@ -335,7 +401,7 @@ methods (Static)
             'side','single','type','psd','fs',fs,'norm',true,'center',true,'avg',true);
         % batch average
         spec = mean(spec,3); 
-        % select sample index
+        % select sample indexes
         switch options.sel
             case 'phase'
                 switch options.selalg
@@ -343,6 +409,8 @@ methods (Static)
                         rdi = cellfun(@(x)isapprox(x,options.thr,'RelativeTolerance',options.rtol),rd,'UniformOutput',false);
                     case 'islocalmax'
                         rdi = cellfun(@(x)islocalmax(x),rd,'UniformOutput',false);
+                        pd = cellfun(@(x)round(deg2rad(options.phshft)*mean(diff(find(x))/(2*pi),'all')),rdi,'UniformOutput',false);
+                        options.idxshft = pd{1};
                 end
                 % shift index
                 rdi = cellfun(@(x)ismember(1:numel(x),find(x)+options.idxshft),rdi,'UniformOutput',false);
@@ -357,17 +425,26 @@ methods (Static)
                 fnc = @(x)sqrt(var(x,[],1));
         end
         % phase/all sample processing by given method
-        sd = cellfun(@(x,i)fnc(x(i,:)),sd,rdi,'UniformOutput',false);
+        sd = cellfun(@(x,i)reshape(fnc(x(i,:)),[],1),sd,rdi,'UniformOutput',false);
         % batch average
-        sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),1,'omitmissing');
+        sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),2,'omitmissing');
         % fill missing
         if ~isempty(options.fillmissing)
             sd = fillmissing(sd,options.fillmissing);
         end
         sch = options.si;
+        if isfield(options,'subref')
+            sd = sd - options.subref;
+        end
+        if options.center; sd = sd - mean(sd,'all','omitmissing'); end
+        if ~isfield(options,'winfun')
+            options.winfun = ones(1,numel(sd));
+        end
+        % weight by window
+        sd = sd(:).*options.winfun(:);
         % store
         y = struct;
-        y.adc = cat(ndims(x{1})+1,x{:});
+        y.adc = x;
         y.ref = rd(1); % reference signal data
         y.refi = rdi(1); % reference signal index
         y.chan = sch; % sensor channel idnexes
@@ -377,6 +454,8 @@ methods (Static)
         y.freq = freq; % frequency vector
         y.sens = sens; % sensor sample data
         y.time = time; % time vector
+        y.sch = options.sch; % valid sensor channel
+        y.winfun = options.winfun;
     end
     function data = hexite(x,i,ac,m,l,p,b,dq)
         arguments (Input)
@@ -495,7 +574,7 @@ methods (Static)
         % save fit
         if isfield(options,'folder')
             filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
-            filename = fullfile(obj.folder,strcat(filename,'.mat'));
+            filename = fullfile(options.folder,strcat(filename,'.mat'));
             save(filename,'ft','ch')
         end
     end
@@ -510,6 +589,124 @@ methods (Static)
         sz = size(data);
         y = cellfun(@(f,d)reshape(f(d),size(d)),ft(:),mat2cell(data,ones(1,sz(1)),sz(2)),'UniformOutput',false);
         y = squeeze(cat(ndims(y{1})+1,y{:}));
+    end
+    function result = modelWaveCancel(dist_resp,dist_amp,act_resp,act_amp,sim_dist_amp,sim_act_amp,ach,sch,options)
+        arguments (Input)
+            dist_resp {mustBeMatrix} % disturbance sensor responses [channel × amplitude]
+            dist_amp {mustBeVector} % disturbace amplitude
+            act_resp (:,:,:) % control disturbance sensor responses [sensor channel × actuator channel × amplitude]
+            act_amp {mustBeVector}
+            sim_dist_amp {mustBeVector} % disturbance amplitude at control
+            sim_act_amp {mustBeVector} % actuator amplitude at control
+            ach {mustBeVector} % actuator channel
+            sch {mustBeVector} % sensor channel
+            options.solver {mustBeMember(options.solver, {'linear-regression', 'fmincon', 'ga'})} = 'linear-regression'
+            options.lb {mustBeVector}
+            options.ub {mustBeVector}
+            options.folder {mustBeFolder}
+            options.norm {mustBeInteger,mustBePositive} = 2
+        end
+        arguments (Output)
+            result (1,1) struct
+        end
+        function u = reval(f,a)
+            u = cellfun(@(f,a)f(a),f(:),num2cell(a(:)),'UniformOutput',false);
+            u = squeeze(sum(cat(ndims(u{1})+1,u{:}),ndims(u{1})+1,'omitmissing'));
+        end
+        
+        % fit artificial disturbances
+        [DAMP,SCH] = meshgrid(dist_amp,sch);
+        tdfit = fit([SCH(:),DAMP(:)],dist_resp(:),'linearinterp');
+        dist_fit = @(x)reshape(tdfit(sch,x*ones(1,numel(sch))),[],1);
+        % select disturbance amplitude
+        y = dist_fit(sim_dist_amp);
+        coff = y;
+
+        % fit control disturbances
+        sz = size(act_resp);
+        tafit = mat2cell(act_resp,sz(1),ones(1,sz(2)),sz(3));
+        [AAMP,SCH] = meshgrid(act_amp,sch);
+        tafit = cellfun(@(x)fit([SCH(:),AAMP(:)],x(:),'linearinterp'),tafit,'UniformOutput',false);
+        fi = cellfun(@(f)@(x)reshape(f(sch,x*ones(1,numel(sch))),[],1),tafit,'UniformOutput',false);
+        fsum = @(x)reval(fi,x);
+
+        switch options.solver
+            case 'linear-regression'
+                x0 = sim_act_amp;
+                P = cellfun(@(f,x)f(x),fi(:),num2cell(x0(:)),'UniformOutput',false);
+                P = squeeze(cat(ndims(P{1})+1,P{:}));
+                T = P*diag(1./x0);
+                u = mldivide(T,-y);
+                con = T*u+y;
+            otherwise
+                % define solver handle
+                slvf = str2func(options.solver);
+                % define problem
+                problem = struct(solver = options.solver, A = [], b = [], Aeq = [], beq = []);
+                problem.solver = options.solver;
+                problem.x0 = sim_act_amp;
+                if isfield(options,'lb'); problem.lb = options.lb; end
+                if isfield(options,'ub'); problem.ub = options.ub; end
+                objective = @(x)norm(fsum(x)+y,options.norm);
+                % configure problem according to solver
+                switch options.solver
+                    case 'fmincon'
+                        problem.objective = objective;
+                        problem.options = optimoptions('fmincon','Algorithm','interior-point','PlotFcn',...
+                            {@optimplotx, @optimplotfval, @optimplotfirstorderopt});
+                    case 'ga'
+                        problem.nvars = numel(ach);
+                        problem.fitnessfcn = objective;
+                        problem.options = optimoptions('ga','ConstraintTolerance',1e-6,...
+                            'PlotFcn',{@gaplotbestf, @gaplotscores, @gaplotdistance});
+                end
+                % solve
+                u = slvf(problem);
+                con = fsum(u)+y;
+        end
+
+        % show disturbances
+        f = figure('WindowStyle','docked','Name','approximation','NumberTitle','off');
+        nexttile; hold on; box on; grid on;
+        if exist('P','var')
+            T = P*diag(1./x0).*u(:)';
+        else
+            P = cellfun(@(f,x)f(x),fi(:),num2cell(u(:)),'UniformOutput',false);
+            P = squeeze(cat(ndims(P{1})+1,P{:}));
+            T = P;
+        end
+        [ACH,SCH] = meshgrid(ach,sch);
+        surf(SCH,ACH,T)
+        xlabel('sensor channel'); ylabel('actuator channel');
+        zlabel('amplitude'); view([320,70]);
+        subtitle('control packets')
+
+        % show control results
+        f = figure('WindowStyle','docked','Name','simulation','NumberTitle','off');
+        nexttile; hold on; box on; grid on; pbaspect([3,1,1]);
+        plot(sch,coff,'-o','DisplayName','off','MarkerFaceColor','auto')
+        plot(sch,con,'-s','DisplayName','on','MarkerFaceColor','auto')
+        l = legend(); title(l,'control','FontWeight','normal')
+        xlabel('channel'); ylabel('amplitude'); subtitle('sensor')
+        nexttile; hold on; box on; grid on; pbaspect([3,1,1]);
+        plot(ach,u,'-o')
+        xlabel('channel'); ylabel('amplitude'); subtitle('actuator')
+        % estimate norm
+        n = options.norm; ncoff = norm(coff,n); ncon = norm(con,n);
+        nlabel = sprintf("%s: n^{off}_{%d}=%.4f; n^{on}_{%d}=%.4f; n^{on}_{%d}/n^{off}_{%d}=%.4f",...
+            options.solver,n,ncoff,n,ncon,n,n,ncon./ncoff);
+        sgtitle(f,nlabel)
+
+        result = struct(ach=ach,sch=sch,coff=coff,con=con,y=y,u=u,ncoff=ncoff,ncon=ncon,method=options.solver);
+        if exist('problem','var'); result.problem = problem; end
+
+        if isfield(options,'folder')
+            filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
+            filename = fullfile(options.folder,strcat(filename,'.mat'));
+            save(filename,'result')
+            fprintf('save results into %s\n',filename)
+        end
+
     end
 end
 end
