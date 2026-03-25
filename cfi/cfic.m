@@ -19,7 +19,7 @@ properties (Access = private)
     dql (:,1) cell = {'log';'batch';'postprocess';'progress';'terminate';'complete'} % data queue label
     pdql (:,1) cell = {'postprocess'} % pollable data queue label
     ffl (:,1) cell = {'process';'optimize'} % feval future label
-    figl (:,1) cell = {'postprocess';'optimization'} % figure labels
+    figl (:,1) cell = {'postprocess';'optimization';'phase'} % figure labels
     ladc struct % LCard ADC parameters
     temporary struct = struct(x=[],y=[],v=[])
 end
@@ -101,10 +101,17 @@ methods (Access = public)
         xlabel(ax,'f, Hz'); ylabel(ax,'PSD, (1/s)^2/Hz'); subtitle(ax,'sensor auto-spectra');
 
         ax = axs(3);
-        plot(ax,data.time,data.sens);
-        l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
-        title(l,'channel','FontWeight','normal');
-        xlabel(ax,'t, s'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
+        if isfield(data,'packsync')
+            plot(ax,data.packsync{1});
+            l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
+            title(l,'channel','FontWeight','normal');
+            xlabel(ax,'sample'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
+        else
+            plot(ax,data.time,data.sens);
+            l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
+            title(l,'channel','FontWeight','normal');
+            xlabel(ax,'t, s'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
+        end
 
         ax = axs(4);
         xlabel(ax,'channel'); ylabel(ax,'<du/dy>, 1/s'); 
@@ -113,6 +120,25 @@ methods (Access = public)
         plot(ax,data.chan,rescale(data.winfun,min(data.zsens(:)),max(data.zsens(:))));
 
         sgtitle(f,string(datetime))
+
+        flabel = 'phase';
+        f = obj.figures.(flabel); 
+        if ~isvalid(f)
+            f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
+            obj.figures.(flabel) = f; 
+        end
+        set(f,'Visible','on'); t = f.Children;
+        if isempty(t)
+            t = tiledlayout(f);
+            if isempty(t.Children)
+                polaraxes(t);
+            end
+        end
+        pax = flip(findobj(t,'type','PolarAxes'));
+        arrayfun(@(x)cla(x),pax);
+        polarplot(pax(1),angle(data.sxy),abs(data.sxy),'.-')
+        sgtitle(f,string(datetime))
+
     end
     function data = exite(obj,x,i)
         arguments
@@ -263,6 +289,7 @@ methods (Access = public)
             obj
             amplitude {mustBeVector}
             options.ach {mustBeVector} = 1:32 % actuator channel
+            options.sch {mustBeVector} = 1:32 % sensor channel
             options.folder {mustBeFolder}
         end
         ach = options.ach;
@@ -279,20 +306,20 @@ methods (Access = public)
         response.actuate = cellfun(@(x)obj.exite(x,options.ach),action,'UniformOutput',false);
         obj.actuate(zeros(1,32),1:32)
 
-        sch = response.reference.sensor.sch;
+        sch = options.sch;
         y = response.reference.sensor.zsens(sch);
         y = y(:);
         P = cellfun(@(x)x.sensor.zsens(sch),response.actuate,'UniformOutput',false);
         P = squeeze(cat(ndims(P{1})+1,P{:}));
         P = P - y;
-        P = reshape(P,sch,ach,[]);
+        P = reshape(P,numel(sch),numel(ach),[]);
 
-        response = struct(P=P,ach=ach,sch=sch,amp=amplitude);
+        result = struct(P=P,ach=ach,sch=sch,amp=amplitude);
 
         if isfield(options,'folder')
             filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
             filename = fullfile(options.folder,strcat(filename,'.mat'));
-            save(filename,'response')
+            save(filename,'result','response')
             fprintf('save results into %s\n',filename)
         end
     end
@@ -310,7 +337,7 @@ methods (Access = public)
         
         figure('WindowStyle','docked'); hold on; box on; grid on; axis square;
         [bmin,bmax] = bounds(objval(:)); b = linspace(bmin,bmax,numel(objval));
-        [n,e] = histcounts(objval,b,'Normalization','count'); e = e(2:end)-diff(e,1,2);
+        [n,e] = histcounts(objval,'Normalization','count'); e = e(2:end)-diff(e,1,2);
         plot(e,n,'-o','MarkerFaceColor','auto'); xlabel('objective function'); ylabel('count');
         subtitle('statisitcs');
         xline(objvalm,'-','mean');
@@ -334,7 +361,7 @@ methods (Static)
         end
         t = zeros(size(ac)); t(i) = x;
         x = ac(:).*t(:);
-        m.set(struct(dac=struct(value=x,index=i-1)));
+        m.set(struct(dac=struct(value=x,index=0:31)));
         y = m.get();
     end
     function y = hprocess(x,options)
@@ -342,6 +369,7 @@ methods (Static)
             x (1,:) cell % data
             options.sch {mustBeVector} % sensor channel
             options.sel {mustBeMember(options.sel,{'phase','all'})} = 'phase' % select sample index mode
+            options.sync (1,1) logical = false % sync
             options.selalg {mustBeMember(options.selalg,{'isapprox','islocalmax'})} = 'islocalmax' % select sample algorithm
             options.idxshft (1,1) double = 0 % index shift
             options.phshft (1,1) double = 0 % phase shift [deg]
@@ -360,6 +388,8 @@ methods (Static)
             options.subref {mustBeVector}
             options.center (1,1) logical = true
             options.winfun {mustBeVector}
+            options.span (1,:) double = 5
+            options.fc (1,1) double = 3
         end
         arguments (Output)
             y (1,1) struct
@@ -375,6 +405,12 @@ methods (Static)
         rd = cellfun(@(x)x(options.rch,:),x,'UniformOutput',false);
         % cell split by channels
         sd = cellfun(@(x)mat2cell(x,ones(1,size(x,1)),size(x,2)),x,'UniformOutput',false);
+        % center
+        sd = cellfun(@(x)cellfun(@(y)normalize(y,2,'center'),x,'UniformOutput',false),...
+            sd,'UniformOutput',false);
+        % low pass filtering
+        sd = cellfun(@(x)cellfun(@(y)smooth(y,options.span,'moving'),x,'UniformOutput',false),...
+            sd,'UniformOutput',false);
         % appply sensor calibration
         if isfield(options,'ft')
             ft = options.ft;
@@ -394,13 +430,24 @@ methods (Static)
         % to store one batch
         sens = sd{1}; time = 0:1/fs:1/fs*(size(sens,1)-1);
         % precess auto-spectra
-        spec = squeeze(cat(ndims(sd{1})+1,sd{:})); 
-        ind = isnan(spec); spec(ind) = 0;
-        [spec,freq] = procspecn(spec,'ftdim',1,...
+        temp = squeeze(cat(ndims(sd{1})+1,sd{:}));
+        temp(:,options.rch,:) = cat(ndims(rd{1})+1,rd{:});
+        ind = isnan(temp); temp(ind) = 0;
+        [spec,freq] = procspecn(temp,'ftdim',1,'chdim',2,...
             'winlen',options.winlen,'overlap',options.overlap,...
-            'side','single','type','psd','fs',fs,'norm',true,'center',true,'avg',true);
-        % batch average
-        spec = mean(spec,3); 
+            'side','single','type','psd','fs',fs,'norm',true,'center',true,'avg',true,'ans','cell');
+        df = freq(2);
+        sxy = spec(options.rch,sch);
+        sxy = squeeze(cat(ndims(spec{1})+1,sxy{:}));
+        ind = abs(freq-options.fc)<df;
+        sxy = mean(sxy(ind,:),1);
+
+        % spectra batch average
+        ind = eye(numel(options.si));
+        ind = logical(ind(:));
+        spec = spec(ind);
+        spec = squeeze(cat(ndims(spec{1})+1,spec{:}));
+        spec = mean(spec,3);
         % select sample indexes
         switch options.sel
             case 'phase'
@@ -414,6 +461,23 @@ methods (Static)
                 end
                 % shift index
                 rdi = cellfun(@(x)ismember(1:numel(x),find(x)+options.idxshft),rdi,'UniformOutput',false);
+                if options.sync
+                    ind = cell(numel(rdi),1);
+                    for i = 1:numel(rdi)
+                        a = find(rdi{i}); 
+                        a = [a(1),repelem(a(2:end-1),2),a(end)]; a = reshape(a,2,[]);
+                        b = max(diff(a,1,1)); a(2,:) = a(1,:)+b;
+                        a = mat2cell(a,size(a,1),ones(1,size(a,2)));
+                        ind{i} = a;
+                    end
+                    % slice packets
+                    sd = cellfun(@(i,x)cellfun(@(y)x(y(1):y(2),:),i,'UniformOutput',false),ind,sd,'UniformOutput',false);
+                    % average packets
+                    sd = cellfun(@(x)mean(cat(ndims(x{1})+1,x{:}),ndims(x{1})+1,'omitmissing'),sd,'UniformOutput',false);
+                    % substract trend
+                    sd = cellfun(@(x)normalize(x,1,'center'),sd,'UniformOutput',false);
+                    packsync = sd;
+                end
             case 'all'
                 rdi = cellfun(@(x)true(1,numel(x)),rd,'UniformOutput',false);
         end
@@ -424,8 +488,12 @@ methods (Static)
             case 'var'
                 fnc = @(x)sqrt(var(x,[],1));
         end
-        % phase/all sample processing by given method
-        sd = cellfun(@(x,i)reshape(fnc(x(i,:)),[],1),sd,rdi,'UniformOutput',false);
+        if options.sync
+            sd = cellfun(@(x)reshape(fnc(abs(x)),[],1),sd,'UniformOutput',false);
+        else
+            % phase/all sample processing by given method
+            sd = cellfun(@(x,i)reshape(fnc(x(i,:)),[],1),sd,rdi,'UniformOutput',false);
+        end
         % batch average
         sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),2,'omitmissing');
         % fill missing
@@ -455,7 +523,9 @@ methods (Static)
         y.sens = sens; % sensor sample data
         y.time = time; % time vector
         y.sch = options.sch; % valid sensor channel
-        y.winfun = options.winfun;
+        y.winfun = options.winfun; % window function
+        if exist('packsync','var'); y.packsync = packsync; end
+        y.sxy = sxy;
     end
     function data = hexite(x,i,ac,m,l,p,b,dq)
         arguments (Input)
@@ -535,6 +605,8 @@ methods (Static)
             ch {mustBeVector,mustBeInteger,mustBePositive} % sensor channel
             options.extend (1,1) logical = true % extend to origin ADC channel size
             options.folder {mustBeFolder} % to save calibration
+            options.center (1,1) logical = true
+            options.offset {mustBeVector}
         end
         arguments (Output)
             ft (:,1) cell
@@ -544,8 +616,12 @@ methods (Static)
         dudy = 0.2124*u.^1.591;
         s = squeeze(mean(data(ch,:,:),2));
         s = mat2cell(s,ones(1,size(s,1)),size(s,2));
+        if options.center; s = cellfun(@(x)normalize(x(:),1,'center'),s,'UniformOutput',false); end
+        if ~isfield(options,'offset')
+            options.offset = zeros(numel(s),1);
+        end
         % fit
-        ft = cellfun(@(x)fit(x(:),dudy(:),'poly2'),s,'UniformOutput',false);
+        ft = cellfun(@(x,o)fit(x(:)+o,dudy(:),'poly2'),s,num2cell(options.offset(:)),'UniformOutput',false);
         % show results: s(du/dy)
         f = figure('WindowStyle','docked'); t = tiledlayout(f);
         ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); axis(ax,'square');
@@ -665,22 +741,6 @@ methods (Static)
                 con = fsum(u)+y;
         end
 
-        % show disturbances
-        f = figure('WindowStyle','docked','Name','approximation','NumberTitle','off');
-        nexttile; hold on; box on; grid on;
-        if exist('P','var')
-            T = P*diag(1./x0).*u(:)';
-        else
-            P = cellfun(@(f,x)f(x),fi(:),num2cell(u(:)),'UniformOutput',false);
-            P = squeeze(cat(ndims(P{1})+1,P{:}));
-            T = P;
-        end
-        [ACH,SCH] = meshgrid(ach,sch);
-        surf(SCH,ACH,T)
-        xlabel('sensor channel'); ylabel('actuator channel');
-        zlabel('amplitude'); view([320,70]);
-        subtitle('control packets')
-
         % show control results
         f = figure('WindowStyle','docked','Name','simulation','NumberTitle','off');
         nexttile; hold on; box on; grid on; pbaspect([3,1,1]);
@@ -699,6 +759,8 @@ methods (Static)
 
         result = struct(ach=ach,sch=sch,coff=coff,con=con,y=y,u=u,ncoff=ncoff,ncon=ncon,method=options.solver);
         if exist('problem','var'); result.problem = problem; end
+        if exist('P','var'); result.P = P; end
+        if exist('T','var'); result.T = T; end
 
         if isfield(options,'folder')
             filename = string(datetime('now','Format','yyyy-MM-dd HH-mm-ss'));
