@@ -14,12 +14,13 @@ properties (Access = public)
     pdq struct % pollable data queue
     ff struct % feval future
     ac {mustBeVector} = ones(1,32) % actuator calibration
+    am {mustBeVector} = 1:32 % actuator channel mapping
 end
 properties (Access = private)
     dql (:,1) cell = {'log';'batch';'postprocess';'progress';'terminate';'complete'} % data queue label
     pdql (:,1) cell = {'postprocess'} % pollable data queue label
     ffl (:,1) cell = {'process';'optimize'} % feval future label
-    figl (:,1) cell = {'postprocess';'optimization';'phase'} % figure labels
+    figl (:,1) cell = {'postprocess';'optimization';'phase';'phaseopt'} % figure labels
     ladc struct % LCard ADC parameters
     temporary struct = struct(x=[],y=[],v=[])
 end
@@ -69,6 +70,9 @@ methods (Access = public)
         end
         % store postprocess data
         obj.pdata = data;
+        if ~isfield(data,'unit')
+            data.unit = 'V';
+        end
         % show postprocess data
         flabel = 'postprocess';
         f = obj.figures.(flabel); 
@@ -91,30 +95,30 @@ methods (Access = public)
         ax = axs(1);
         cellfun(@(x,i)[plot(ax,data.time,x,'.-'),plot(ax,data.time(find(i)),x(i),'-o','MarkerFaceColor','auto')],...
             data.ref,data.refi,'UniformOutput',false);
-        xlabel(ax,'t, s'); ylabel(ax,'amplitude, V'); subtitle(ax,'reference signal');
+        xlabel(ax,'t, s'); ylabel(ax,strcat("amplitude, ",data.unit)); subtitle(ax,'reference signal');
 
         ax = axs(2);
         plot(ax,data.freq,data.spec); 
         l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
         title(l,'channel','FontWeight','normal');
         set(ax,'xscale','log','yscale','log');
-        xlabel(ax,'f, Hz'); ylabel(ax,'PSD, (1/s)^2/Hz'); subtitle(ax,'sensor auto-spectra');
+        xlabel(ax,'f, Hz'); ylabel(ax,strcat("PSD, (",data.unit,")^2/Hz")); subtitle(ax,'sensor auto-spectra');
 
         ax = axs(3);
         if isfield(data,'packsync')
             plot(ax,data.packsync{1});
             l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
             title(l,'channel','FontWeight','normal');
-            xlabel(ax,'sample'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
+            xlabel(ax,'sample'); ylabel(ax,strcat("s, ",data.unit)); subtitle(ax,'sensor signal');
         else
             plot(ax,data.time,data.sens);
             l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
             title(l,'channel','FontWeight','normal');
-            xlabel(ax,'t, s'); ylabel(ax,'du/dy, 1/s'); subtitle(ax,'sensor signal');
+            xlabel(ax,'t, s'); ylabel(ax,strcat("s, ",data.unit)); subtitle(ax,'sensor signal');
         end
 
         ax = axs(4);
-        xlabel(ax,'channel'); ylabel(ax,'<du/dy>, 1/s'); 
+        xlabel(ax,'channel'); ylabel(ax,strcat("<s>, ",data.unit)); 
         subtitle(ax,'spanwise sensor signal')
         plot(ax,data.chan,data.zsens,'-o','MarkerFaceColor','auto');
         plot(ax,data.chan,rescale(data.winfun,min(data.zsens(:)),max(data.zsens(:))));
@@ -131,12 +135,14 @@ methods (Access = public)
         if isempty(t)
             t = tiledlayout(f);
             if isempty(t.Children)
-                polaraxes(t);
+                arrayfun(@(x)polaraxes(t),1);
+                arrayfun(@(x)hold(x,'on'),t.Children)
             end
         end
-        pax = flip(findobj(t,'type','PolarAxes'));
-        arrayfun(@(x)cla(x),pax);
-        polarplot(pax(1),angle(data.sxy),abs(data.sxy),'.-')
+        paxs = flip(findobj(t,'type','PolarAxes'));
+        arrayfun(@(x)cla(x),paxs);
+        pax = paxs(1);
+        polarplot(pax,data.sxy,'.-')
         sgtitle(f,string(datetime))
 
     end
@@ -146,7 +152,7 @@ methods (Access = public)
             x {mustBeVector}
             i {mustBeVector,mustBeInteger,mustBePositive}
         end
-        data = cfic.hexite(x,i,obj.ac,obj.mcu,obj.lcard,obj.process,obj.bsize,parallel.pool.DataQueue);
+        data = cfic.hexite(x,i,obj.ac,obj.am,obj.mcu,obj.lcard,obj.process,obj.bsize,parallel.pool.DataQueue);
     end
     function optimize(obj,problem,index,options)
         arguments
@@ -163,10 +169,11 @@ methods (Access = public)
 
         % stack args
         acalib = obj.ac;
+        amap = obj.am;
         dqprogress = obj.dq.progress;
         bsize = obj.bsize;
         process = obj.process;
-        exite = @(x,m,l)cfic.hexite(x,index,acalib,m,l,process,bsize,dqprogress);
+        exite = @(x,m,l)cfic.hexite(x,index,acalib,amap,m,l,process,bsize,dqprogress);
         args = {cmcu,clcard,problem,exite,obj.dq.log,obj.dq.terminate,obj.dq.complete};
 
         if options.parallel
@@ -254,6 +261,29 @@ methods (Access = public)
         xlabel('iteration'); ylabel('objective function')
 
         sgtitle(f,string(datetime))
+
+        % flabel = 'phaseopt';
+        % f = obj.figures.(flabel); 
+        % if ~isvalid(f)
+        %     f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
+        %     obj.figures.(flabel) = f; 
+        % end
+        % set(f,'Visible','on'); t = f.Children;
+        % if isempty(t)
+        %     t = tiledlayout(f);
+        %     if isempty(t.Children)
+        %         arrayfun(@(x)polaraxes(t),1);
+        %         arrayfun(@(x)hold(x,'on'),t.Children)
+        %     end
+        % end
+        % paxs = flip(findobj(t,'type','PolarAxes'));
+        % arrayfun(@(x)cla(x),paxs);
+        % 
+        % pax = paxs(1);
+        % polarplot(pax,obj.result{1}.sensor.sxy,'.-','DisplayName','disturbance')
+        % polarplot(pax,obj.result{end}.sensor.sxy,'.-','DisplayName','optimization')
+        % legend(pax)
+        % sgtitle(f,string(datetime))
     end
     function complete(obj,x)
         obj.pdq.postprocess.close;
@@ -282,7 +312,7 @@ methods (Access = public)
         arguments (Output)
             y (1,1) struct
         end
-        y = cfic.hactuate(obj.mcu,x,i,obj.ac);
+        y = cfic.hactuate(obj.mcu,x,i,obj.ac,obj.am);
     end
     function response = identify(obj,amplitude,options)
         arguments (Input)
@@ -349,18 +379,20 @@ methods (Access = public)
     end
 end
 methods (Static)
-    function y = hactuate(m,x,i,ac)
+    function y = hactuate(m,x,i,ac,am)
         arguments (Input)
             m mcu
             x {mustBeVector} % amplitudes
             i {mustBeVector} % channels
             ac {mustBeVector} % calibration
+            am {mustBeVector} % mapping
         end
         arguments (Output)
             y (1,1) struct
         end
         t = zeros(size(ac)); t(i) = x;
         x = ac(:).*t(:);
+        x = x(am);
         m.set(struct(dac=struct(value=x,index=0:31)));
         y = m.get();
     end
@@ -390,6 +422,7 @@ methods (Static)
             options.winfun {mustBeVector}
             options.span (1,:) double = 5
             options.fc (1,1) double = 3
+            options.objtype {mustBeMember(options.objtype,{'prof','diff'})} = 'prof'
         end
         arguments (Output)
             y (1,1) struct
@@ -413,6 +446,7 @@ methods (Static)
             sd,'UniformOutput',false);
         % appply sensor calibration
         if isfield(options,'ft')
+            unit = '1/s';
             ft = options.ft;
             if isfield(options,'fch')
                 temp = repmat({@(x)nan(size(x))},n,1);
@@ -421,6 +455,7 @@ methods (Static)
                 error('fit cell array size must be same ADC channels')
             end
         else
+            unit = 'V';
             ft = repmat({@(x)nan(size(x))},n,1);
             ft(sch) = repmat({@(x)x},numel(sch),1);
         end
@@ -517,7 +552,12 @@ methods (Static)
         y.refi = rdi(1); % reference signal index
         y.chan = sch; % sensor channel idnexes
         y.zsens = sd; % batch and sample averaged transversal amplitude profile
-        y.objval = norm(y.zsens(~isnan(y.zsens)),options.norm); % objective function value
+        objval = y.zsens(~isnan(y.zsens));
+        switch options.objtype
+            case 'diff'
+                objval = diff(objval,1,1);
+        end
+        y.objval = norm(objval,options.norm); % objective function value
         y.spec = spec; % auto-spectra
         y.freq = freq; % frequency vector
         y.sens = sens; % sensor sample data
@@ -526,12 +566,14 @@ methods (Static)
         y.winfun = options.winfun; % window function
         if exist('packsync','var'); y.packsync = packsync; end
         y.sxy = sxy;
+        y.unit = unit;
     end
-    function data = hexite(x,i,ac,m,l,p,b,dq)
+    function data = hexite(x,i,ac,am,m,l,p,b,dq)
         arguments (Input)
             x {mustBeVector} % actuator control vector
             i {mustBeVector} % actuator index
             ac {mustBeVector} % actuator calibration
+            am {mustBeVector} % actuator mapping
             m mcu
             l lcard
             p function_handle % process handle
@@ -541,7 +583,7 @@ methods (Static)
         arguments (Output)
             data (1,1) struct
         end
-        xdata = cfic.hactuate(m,x,i,ac);
+        xdata = cfic.hactuate(m,x,i,ac,am);
         xdata.action = x; xdata.channel = i;
         ydata = p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
         data = struct(actuator=xdata,sensor=ydata);
