@@ -20,7 +20,7 @@ properties (Access = private)
     dql (:,1) cell = {'log';'batch';'postprocess';'progress';'terminate';'complete'} % data queue label
     pdql (:,1) cell = {'postprocess'} % pollable data queue label
     ffl (:,1) cell = {'process';'optimize'} % feval future label
-    figl (:,1) cell = {'postprocess';'optimization';'phase';'phaseopt'} % figure labels
+    figl (:,1) cell = {'postprocess';'optimization';'phase';'phaseh';'phaseopt'} % figure labels
     ladc struct % LCard ADC parameters
     temporary struct = struct(x=[],y=[],v=[])
 end
@@ -98,7 +98,7 @@ methods (Access = public)
         xlabel(ax,'t, s'); ylabel(ax,strcat("amplitude, ",data.unit)); subtitle(ax,'reference signal');
 
         ax = axs(2);
-        plot(ax,data.freq,data.spec); 
+        plot(ax,data.freq,data.sxx); 
         l = legend(ax,num2str(data.chan(:)),'NumColumns',4,'visible','off'); 
         title(l,'channel','FontWeight','normal');
         set(ax,'xscale','log','yscale','log');
@@ -125,6 +125,7 @@ methods (Access = public)
 
         sgtitle(f,string(datetime))
 
+        ind = 1;
         flabel = 'phase';
         f = obj.figures.(flabel); 
         if ~isvalid(f)
@@ -142,8 +143,31 @@ methods (Access = public)
         paxs = flip(findobj(t,'type','PolarAxes'));
         arrayfun(@(x)cla(x),paxs);
         pax = paxs(1);
-        polarplot(pax,data.sxy,'.-')
+        cellfun(@(x)polarplot(pax,x,'.-'),data.sxyf(ind))
+        l = legend(pax,num2str(data.fh(ind))); title(l,'f, Hz','FontWeight','normal');
         sgtitle(f,string(datetime))
+
+        % ind = 2;
+        % flabel = 'phaseh';
+        % f = obj.figures.(flabel); 
+        % if ~isvalid(f)
+        %     f = figure('Name',flabel,'WindowStyle','docked','NumberTitle','off');
+        %     obj.figures.(flabel) = f; 
+        % end
+        % set(f,'Visible','on'); t = f.Children;
+        % if isempty(t)
+        %     t = tiledlayout(f);
+        %     if isempty(t.Children)
+        %         arrayfun(@(x)polaraxes(t),1);
+        %         arrayfun(@(x)hold(x,'on'),t.Children)
+        %     end
+        % end
+        % paxs = flip(findobj(t,'type','PolarAxes'));
+        % arrayfun(@(x)cla(x),paxs);
+        % pax = paxs(1);
+        % cellfun(@(x)polarplot(pax,x,'.-'),data.sxyf(ind))
+        % l = legend(pax,num2str(data.fh(ind))); title(l,'f, Hz','FontWeight','normal');
+        % sgtitle(f,string(datetime))
 
     end
     function data = exite(obj,x,i)
@@ -412,6 +436,7 @@ methods (Static)
             options.thr (1,1) double = 1.6 % reference signal threshold
             options.rtol (1,1) double = 0.02 % relative tolerance
             options.ft (1,:) cell % calibration fit object
+            options.calib {mustBeMember(options.calib, {'full','tang'})} = 'full'
             options.fch {mustBeVector} % calibration fit channel
             options.fillmissing {mustBeMember(options.fillmissing,{'','linear','nearest'})} = 'nearest'
             options.fs (1,1) double = 1 % sample frequency
@@ -421,8 +446,9 @@ methods (Static)
             options.center (1,1) logical = true
             options.winfun {mustBeVector}
             options.span (1,:) double = 5
-            options.fc (1,1) double = 3
-            options.objtype {mustBeMember(options.objtype,{'prof','diff'})} = 'prof'
+            options.fh {mustBeVector} = 3 % frequency list of harmonics
+            options.objtype {mustBeMember(options.objtype,{'prof','diff','auto-spectra','cross-spectra'})} = 'prof'
+            options.fpass {mustBeScalarOrEmpty}
         end
         arguments (Output)
             y (1,1) struct
@@ -442,12 +468,21 @@ methods (Static)
         sd = cellfun(@(x)cellfun(@(y)normalize(y,2,'center'),x,'UniformOutput',false),...
             sd,'UniformOutput',false);
         % low pass filtering
-        sd = cellfun(@(x)cellfun(@(y)smooth(y,options.span,'moving'),x,'UniformOutput',false),...
-            sd,'UniformOutput',false);
+        if isfield(options,'fpass')
+            sd = cellfun(@(x)cellfun(@(y)lowpass(y,options.fpass,fs),x,'UniformOutput',false),...
+                sd,'UniformOutput',false);
+        else
+            sd = cellfun(@(x)cellfun(@(y)smooth(y,options.span,'moving'),x,'UniformOutput',false),...
+                sd,'UniformOutput',false);
+        end
         % appply sensor calibration
         if isfield(options,'ft')
             unit = '1/s';
             ft = options.ft;
+            switch options.calib
+                case 'tang'
+                    ft = cellfun(@(f)@(x)f.p1*x,ft,'UniformOutput',false);
+            end
             if isfield(options,'fch')
                 temp = repmat({@(x)nan(size(x))},n,1);
                 temp(options.fch) = ft; ft = temp;
@@ -464,25 +499,34 @@ methods (Static)
         sd = cellfun(@(x)squeeze(cat(ndims(x{1})+1,x{:})),sd,'UniformOutput',false);
         % to store one batch
         sens = sd{1}; time = 0:1/fs:1/fs*(size(sens,1)-1);
-        % precess auto-spectra
+        % process cross-spectra matrix
         temp = squeeze(cat(ndims(sd{1})+1,sd{:}));
         temp(:,options.rch,:) = cat(ndims(rd{1})+1,rd{:});
         ind = isnan(temp); temp(ind) = 0;
         [spec,freq] = procspecn(temp,'ftdim',1,'chdim',2,...
             'winlen',options.winlen,'overlap',options.overlap,...
-            'side','single','type','psd','fs',fs,'norm',true,'center',true,'avg',true,'ans','cell');
-        df = freq(2);
+            'side','single','type','psd','fs',fs,'norm',true,...
+            'center',true,'avg',true,'ans','cell');
+        df = freq(2)-freq(1);
+        indf = arrayfun(@(x)ismembertol(freq,x,df/2,'DataScale',1),options.fh,'UniformOutput',false);
+        % cross-spectra
         sxy = spec(options.rch,sch);
         sxy = squeeze(cat(ndims(spec{1})+1,sxy{:}));
-        ind = abs(freq-options.fc)<df;
-        sxy = mean(sxy(ind,:),1);
-
-        % spectra batch average
+        % batch average
+        sxy = squeeze(permute(sxy,[1,3,2]));
+        sxy = mean(sxy,3);
+        % average by frequency bins
+        sxyf = cellfun(@(x)mean(sxy(x,:),1),indf,'UniformOutput',false);
+        % auto spectra 
         ind = eye(numel(options.si));
         ind = logical(ind(:));
-        spec = spec(ind);
-        spec = squeeze(cat(ndims(spec{1})+1,spec{:}));
-        spec = mean(spec,3);
+        sxx = spec(ind);
+        sxx = squeeze(cat(ndims(sxx{1})+1,sxx{:}));
+        % batch average
+        sxx = squeeze(permute(sxx,[1,3,2]));
+        sxx = mean(sxx,3);
+        % average by frequency bins
+        sxxf = cellfun(@(x)mean(sxx(x,:),1),indf,'UniformOutput',false);
         % select sample indexes
         switch options.sel
             case 'phase'
@@ -521,7 +565,7 @@ methods (Static)
             case 'mean'
                 fnc = @(x)mean(x,1);
             case 'var'
-                fnc = @(x)sqrt(var(x,[],1));
+                fnc = @(x)sqrt(var(x,tukeywin(size(x,1),0.2),1));
         end
         if options.sync
             sd = cellfun(@(x)reshape(fnc(abs(x)),[],1),sd,'UniformOutput',false);
@@ -531,8 +575,30 @@ methods (Static)
         end
         % batch average
         sd = mean(squeeze(cat(ndims(sd{1})+1,sd{:})),2,'omitmissing');
+        switch options.objtype
+            case 'diff'
+                sd = diff(sd,1,1);
+            case 'auto-spectra'
+                sd = cat(1,sxxf{:});
+                sd(sd==0) = nan;
+                % harmonic sum
+                sd = sum(sd,1,'omitmissing');
+                sd(options.rch) = nan;
+            case 'cross-spectra'
+                sd = cat(1,sxyf{:});
+                sd(sd==0) = nan;
+                % harmonic sum
+                sd = sum(sd,1,'omitmissing');
+                temp = nan(1,numel(options.si));
+                temp(options.sch) = sd;
+                sd = temp;
+                sd = abs(sd);
+        end
         % fill missing
-        if ~isempty(options.fillmissing)
+        if isempty(options.fillmissing)
+            sd(isnan(sd)) = 0;
+        else
+            sd(sd==0) = nan;
             sd = fillmissing(sd,options.fillmissing);
         end
         sch = options.si;
@@ -552,20 +618,19 @@ methods (Static)
         y.refi = rdi(1); % reference signal index
         y.chan = sch; % sensor channel idnexes
         y.zsens = sd; % batch and sample averaged transversal amplitude profile
-        objval = y.zsens(~isnan(y.zsens));
-        switch options.objtype
-            case 'diff'
-                objval = diff(objval,1,1);
-        end
-        y.objval = norm(objval,options.norm); % objective function value
-        y.spec = spec; % auto-spectra
+        y.objval = norm(sd,options.norm); % objective function value
+        y.sxx = sxx; % auto-spectra
+        y.sxxf = sxxf; % auto-spectra of harmonics
+        y.sxy = sxy;% cross-spectra
+        y.sxyf = sxyf;% cross-spectra of harmonics
+        y.fh = options.fh; % frequency of harmonics
         y.freq = freq; % frequency vector
+        y.indf = indf;
         y.sens = sens; % sensor sample data
         y.time = time; % time vector
         y.sch = options.sch; % valid sensor channel
         y.winfun = options.winfun; % window function
         if exist('packsync','var'); y.packsync = packsync; end
-        y.sxy = sxy;
         y.unit = unit;
     end
     function data = hexite(x,i,ac,am,m,l,p,b,dq)
@@ -585,6 +650,7 @@ methods (Static)
         end
         xdata = cfic.hactuate(m,x,i,ac,am);
         xdata.action = x; xdata.channel = i;
+        pause(0.2);
         ydata = p(arrayfun(@(x)l.adcread(),1:b,'UniformOutput',false));
         data = struct(actuator=xdata,sensor=ydata);
         arrayfun(@(q)send(q,data),dq);
@@ -649,6 +715,7 @@ methods (Static)
             options.folder {mustBeFolder} % to save calibration
             options.center (1,1) logical = true
             options.offset {mustBeVector}
+            options.fit {mustBeMember(options.fit, {'poly1','poly2'})} = 'poly0'
         end
         arguments (Output)
             ft (:,1) cell
@@ -663,7 +730,7 @@ methods (Static)
             options.offset = zeros(numel(s),1);
         end
         % fit
-        ft = cellfun(@(x,o)fit(x(:)+o,dudy(:),'poly2'),s,num2cell(options.offset(:)),'UniformOutput',false);
+        ft = cellfun(@(x,o)fit(x(:)+o,dudy(:),options.fit),s,num2cell(options.offset(:)),'UniformOutput',false);
         % show results: s(du/dy)
         f = figure('WindowStyle','docked'); t = tiledlayout(f);
         ax = nexttile(t); hold(ax,'on'); grid(ax,'on'); box(ax,'on'); axis(ax,'square');
