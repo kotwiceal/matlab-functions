@@ -38,7 +38,7 @@ function varargout = prepcta(input, kwargs)
         kwargs.permute double = [] % permute data
         %% transform
         kwargs.unit (1,:) char {mustBeMember(kwargs.unit, {'mm', 'count'})} = 'mm' % scan unit
-        kwargs.refmarker (1,:) char {mustBeMember(kwargs.refmarker, {'none', 'n2', 'n8', 'n9'})} = 'none' % reference marker of skew coordinate system
+        kwargs.refmarker (1,:) char {mustBeMember(kwargs.refmarker, {'none', 'n2', 'n6', 'n8', 'n9'})} = 'none' % reference marker of skew coordinate system
         kwargs.xfit = [] % fitobj transfrom to leading edge coordinate system
         kwargs.yfit = [] % fitobj to reverse a correction of vectical scanning component
         kwargs.zfit = [] % fitobj transfrom to leading edge coordinate system
@@ -166,6 +166,9 @@ function varargout = prepcta(input, kwargs)
                                 case 'n2'
                                     kwargs.ort = [113.9, 63.7; 113.9, 112.4; 126.8, 118.9; 126.7, 70.2]; % mm
                                     kwargs.skew = [0, 0; 0, 2e4; 300, 2e4; 300, 0]; % count
+                                case 'n6'
+                                    kwargs.ort = [294.65, 147.38; 295.01, 171.91; 384.42, 214.55; 383.99, 189.59]; % count
+                                    kwargs.skew = [0, 0; 6, 9850; 2040, 9500; 2030, -580]; % mm
                                 case 'n8'
                                     kwargs.ort = [384.6, 189.4; 294, 148.4; 294.4, 198.5; 384.6, 139.4]; % mm
                                     kwargs.skew = [0, 0; -2086, 1060; -2086, 21124; 0, -20060]; % count
