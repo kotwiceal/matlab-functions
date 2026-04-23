@@ -11,6 +11,8 @@ function data = loadpivdev(source, kwargs)
         kwargs.scale (1,1) logical = true % apply scale to velocity
         kwargs.split (1,1) logical = true % split velocity components
         kwargs.regexp (1,1) logical = false
+        kwargs.permute (1,:) = [2, 1] % permute axes
+        kwargs.flip (1,:) = 1 % flip axis
     end
 
     if isscalar(source)
@@ -46,6 +48,7 @@ function data = loadpivdev(source, kwargs)
         imx = readimx(char(kwargs.filenames(i)));
         ng{i} = [imx.Nx, imx.Ny];
         scc{i} = {imx.ScaleX, imx.ScaleY};
+        scc{i} = cellfun(@(x)x.*[imx.Grid;1],scc{i},'UniformOutput',false);
         scv{i} = imx.ScaleI(1);
         temp = reshape(imx.Data, [ng{i}, size(imx.Data,2)/ng{i}(2)]);
         if ~isempty(kwargs.slice); temp = temp(:,:,kwargs.slice); end
@@ -61,12 +64,11 @@ function data = loadpivdev(source, kwargs)
 
     coord = cell(m ,1);
     parfor (i = 1:m, backgroundPool)
-        temp = cellfun(@(x) 1:x, num2cell(ng{i}), 'UniformOutput', false);
+        temp = cellfun(@(x) 0:x-1, num2cell(ng{i}), 'UniformOutput', false);
         [temp{:}] = ndgrid(temp{:});
         coord{i} = cellfun(@(c,s) c.*s(1)+s(2), temp, scc{i}, 'UniformOutput', false);        
     end
     coord = [coord{:}];
-    % coord = cellfun(@(x) coord(:,x), num2cell(1:size(coord,1)), 'UniformOutput', false);
 
     if kwargs.scale
         vel = cellfun(@(x,c1,c2) x.*shiftdim(sign([c1{1}(1),c1{2}(1)]),-1)*c2, ...
@@ -81,6 +83,16 @@ function data = loadpivdev(source, kwargs)
     if m == 1
         vel = cellfun(@(x) cat(3, x{:}), vel, 'UniformOutput', false);
         vel = cellfun(@(x) reshape(x, [size(x,[1,2]),szf]), vel, 'UniformOutput', false);
+    end
+
+    if ~isempty(kwargs.permute)
+        coord = cellfun(@(x)permute(x,kwargs.permute),coord,'UniformOutput',false);
+        vel = cellfun(@(v,c)permute(v,[kwargs.permute,ndims(c)+1:ndims(v)]),vel,coord,'UniformOutput',false);
+    end
+
+    if ~isempty(kwargs.flip)
+        coord = cellfun(@(x)flip(x,kwargs.flip),coord,'UniformOutput',false);
+        vel = cellfun(@(x)flip(x,kwargs.flip),vel,'UniformOutput',false);
     end
 
     data = cell2struct(cat(2, coord, vel), cat(2, kwargs.coordinates, kwargs.components), 2);
